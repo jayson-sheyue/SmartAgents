@@ -1,0 +1,7 @@
+google-adk==0.1.0b1
+google-cloud-aiplatform
+playwright
+playwright-stealth
+pandas
+openpyxl
+requests
