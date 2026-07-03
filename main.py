@@ -5,6 +5,7 @@ from google.genai import types
 import time
 import json # 在代码最顶部添加
 from playwright.sync_api import sync_playwright
+from dotenv import load_dotenv
 try:
     from playwright_stealth import stealth_sync # 旧版本用法
 except ImportError:
@@ -12,11 +13,16 @@ except ImportError:
     def stealth_sync(page):
         Stealth().apply_stealth_sync(page)
 
+load_dotenv()
+
 # ==========================================
 # 1. 平台环境配置初始化 (Setup - 使用最新 Gen AI SDK)
 # ==========================================
-PROJECT_ID = "webeye-internal-test"
-LOCATION = "us-central1" # 请确保这是您启用 API 的区域
+PROJECT_ID = os.getenv("GCP_PROJECT_ID") or os.getenv("PROJECT_ID", "")
+LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+
+if not PROJECT_ID:
+    raise RuntimeError("请在 .env 中设置 GCP_PROJECT_ID（可复制 .env.example 为 .env）")
 
 # 初始化 Gen AI Client (明确声明使用 Vertex AI 后端)
 client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)

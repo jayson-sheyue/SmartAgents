@@ -1,0 +1,88 @@
+{
+  "tools": [
+    {
+      "name": "get_up_list",
+      "description": "读取本地 Excel 文件，获取 B 站 UP 主名单。返回 P0 统一 envelope（ok/data/error/meta）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "excel_path": {
+            "type": "string",
+            "description": "Excel 路径，默认 ~/Desktop/Up主名称.xlsx；须在 Desktop 或 ~/Documents/BilibiliRPA 下"
+          },
+          "sheet_name": {
+            "type": "string",
+            "description": "工作表名，默认 Sheet1"
+          },
+          "name_column": {
+            "type": "string",
+            "description": "UP 主列名，省略则使用第一列"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "最多返回条数"
+          }
+        }
+      },
+      "annotations": {
+        "title": "获取 UP 主名单",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "fetch_fans_data",
+      "description": "启动本地 RPA 抓取 UP 主粉丝数。返回 envelope；成功时 data.fans_count_display 可用于 write_excel。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "up_name": {
+            "type": "string",
+            "description": "UP 主名称"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "true 时仅检查登录态，不启动浏览器"
+          }
+        },
+        "required": ["up_name"]
+      },
+      "annotations": {
+        "title": "抓取粉丝数据",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "write_excel",
+      "description": "将粉丝数写回 Excel。支持指定路径与 write_mode（update / append_if_missing）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "up_name": { "type": "string" },
+          "fans_count": { "type": "string", "description": "建议使用 fetch 返回的 fans_count_display" },
+          "excel_path": { "type": "string" },
+          "sheet_name": { "type": "string" },
+          "target_column": { "type": "string" },
+          "write_mode": {
+            "type": "string",
+            "enum": ["update", "append_if_missing"],
+            "description": "update=仅更新已有行；append_if_missing=不存在则追加"
+          }
+        },
+        "required": ["up_name", "fans_count"]
+      },
+      "annotations": {
+        "title": "写入 Excel",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

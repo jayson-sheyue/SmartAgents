@@ -1,7 +1,5 @@
-google-adk==0.1.0b1
+google-adk>=2.3.0
 google-cloud-aiplatform
-playwright
-playwright-stealth
-pandas
-openpyxl
+google-genai
+python-dotenv
 requests

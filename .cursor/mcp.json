@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bilibili-rpa": {
+      "command": "python3",
+      "args": ["mcp_server/bilibili_mcp.py"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

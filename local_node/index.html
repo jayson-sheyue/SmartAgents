@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bilibili Agent Web Widget</title>
+    <style>
+        :root {
+            --bili-blue: #00a1d6;
+            --bg: #f0f2f5;
+            --tool-bg: #fff8e6;
+            --tool-border: #ffe082;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); margin: 0; }
+
+        #widget-button {
+            position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px;
+            background: var(--bili-blue); color: white; border-radius: 50%;
+            text-align: center; line-height: 60px; font-size: 24px;
+            cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000;
+        }
+
+        #chat-panel {
+            position: fixed; bottom: 90px; right: 20px; width: 380px; height: 520px;
+            background: white; border-radius: 12px; box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            display: none; flex-direction: column; overflow: hidden; z-index: 1000;
+        }
+
+        .chat-header {
+            background: var(--bili-blue); color: white; padding: 12px 15px;
+            font-weight: 600; font-size: 15px;
+            display: flex; justify-content: space-between; align-items: flex-start;
+        }
+        .chat-header-main { flex: 1; min-width: 0; }
+        #new-session-btn {
+            background: rgba(255,255,255,0.2); border: none; color: white;
+            font-size: 11px; padding: 4px 8px; border-radius: 6px; cursor: pointer;
+            white-space: nowrap; margin-left: 8px;
+        }
+        #new-session-btn:hover { background: rgba(255,255,255,0.35); }
+        .chat-sub {
+            font-size: 11px; font-weight: normal; opacity: 0.85; margin-top: 4px;
+            word-break: break-all;
+        }
+
+        #chat-messages {
+            flex: 1; padding: 12px; overflow-y: auto;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+
+        .msg {
+            max-width: 88%; padding: 10px 12px; border-radius: 10px;
+            line-height: 1.45; font-size: 14px; white-space: pre-wrap;
+        }
+        .msg.user { background: #e3f2fd; align-self: flex-end; color: #111; }
+        .msg.bot { background: #f1f1f1; align-self: flex-start; color: #333; }
+        .msg.tool {
+            align-self: stretch; max-width: 100%;
+            background: var(--tool-bg); border: 1px solid var(--tool-border);
+            font-size: 12px; color: #5d4037; padding: 8px 10px;
+        }
+        .msg.tool .tool-name { font-weight: 600; color: #e65100; }
+        .msg.loading { color: #888; font-style: italic; }
+
+        .chat-input-area {
+            display: flex; padding: 10px; border-top: 1px solid #eee; gap: 8px;
+        }
+        #chat-input {
+            flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 20px;
+            outline: none; font-size: 14px;
+        }
+        #send-btn {
+            background: var(--bili-blue); color: white; border: none;
+            padding: 0 16px; border-radius: 20px; cursor: pointer; font-weight: 600;
+        }
+        #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+    <div id="widget-button" onclick="toggleChat()" title="B站数据小助手">💬</div>
+
+    <div id="chat-panel">
+        <div class="chat-header">
+            <div class="chat-header-main">
+                B站数据小助手
+                <div class="chat-sub" id="session-label">REST Cloud Agent · 连接中…</div>
+            </div>
+            <button type="button" id="new-session-btn" onclick="startNewSession()" title="清空本地会话并新建云端 Session">新会话</button>
+        </div>
+        <div id="chat-messages">
+            <div class="msg bot">你好！我是 B 站数据分析 Agent（云端 REST + 本地 RPA）。&#10;例如：查一下某 UP 主粉丝数并写入 Excel。</div>
+        </div>
+        <div class="chat-input-area">
+            <input type="text" id="chat-input" placeholder="输入指令…" onkeypress="handleEnter(event)">
+            <button id="send-btn" onclick="sendMessage()">发送</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = (window.location.port === '8000') ? '' : 'http://localhost:8000';
+        const userId = 'web_user_001';
+        const SESSION_KEY = 'bilibili_widget_session';
+        let sessionId = sessionStorage.getItem(SESSION_KEY) || null;
+        let sessionReady = false;
+
+        function updateSessionLabel(extra) {
+            const el = document.getElementById('session-label');
+            const sid = sessionId ? ('session ' + sessionId.slice(0, 12) + '…') : '未连接';
+            el.textContent = 'REST Cloud Agent · ' + sid + (extra ? ' · ' + extra : '');
+        }
+
+        async function ensureSession(forceNew) {
+            const response = await fetch(API_BASE + '/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: userId,
+                    session_id: forceNew ? null : sessionId,
+                    force_new: !!forceNew
+                })
+            });
+            const data = await response.json();
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            if (data.session_id) {
+                sessionId = data.session_id;
+                sessionStorage.setItem(SESSION_KEY, sessionId);
+                sessionReady = true;
+            }
+            return data;
+        }
+
+        async function checkHealth() {
+            try {
+                const r = await fetch(API_BASE + '/health');
+                const h = await r.json();
+                const rest = h.rest_node_reachable ? 'REST :8001 ✓' : 'REST :8001 ✗';
+                updateSessionLabel(rest);
+            } catch (e) {
+                updateSessionLabel('后端未启动');
+            }
+        }
+
+        async function initSession() {
+            try {
+                await ensureSession(false);
+                updateSessionLabel('会话已续接');
+            } catch (e) {
+                updateSessionLabel('会话连接失败');
+                console.error(e);
+            }
+        }
+
+        async function startNewSession() {
+            if (!confirm('开始新会话？云端对话上下文将重置（Memory Bank 不受影响）。')) return;
+            document.getElementById('chat-messages').innerHTML =
+                '<div class="msg bot">已开始新会话。有什么可以帮您？</div>';
+            try {
+                await ensureSession(true);
+                updateSessionLabel('新会话');
+            } catch (e) {
+                addMessage('无法创建新会话: ' + e.message, 'bot');
+            }
+        }
+
+        function toggleChat() {
+            const panel = document.getElementById('chat-panel');
+            const show = panel.style.display !== 'flex';
+            panel.style.display = show ? 'flex' : 'none';
+            if (show) {
+                checkHealth();
+                if (!sessionReady) initSession();
+            }
+        }
+
+        function handleEnter(e) {
+            if (e.key === 'Enter') sendMessage();
+        }
+
+        function scrollBottom() {
+            const box = document.getElementById('chat-messages');
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function addMessage(text, className) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'msg ' + className;
+            msgDiv.innerText = text;
+            document.getElementById('chat-messages').appendChild(msgDiv);
+            scrollBottom();
+            return msgDiv;
+        }
+
+        function formatToolEvent(ev) {
+            if (ev.type === 'tool_call') {
+                const args = JSON.stringify(ev.args || {}, null, 0);
+                return '🔧 调用 ' + ev.name + (args !== '{}' ? '\n   参数: ' + args : '');
+            }
+            if (ev.type === 'tool_result') {
+                const ok = ev.ok === true ? '✅' : (ev.ok === false ? '❌' : 'ℹ️');
+                return ok + ' ' + ev.name + '\n   ' + (ev.summary || '');
+            }
+            return JSON.stringify(ev);
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const btn = document.getElementById('send-btn');
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage(message, 'user');
+            input.value = '';
+            btn.disabled = true;
+
+            const loadingEl = addMessage('正在连接云端 Agent 并执行…', 'bot loading');
+
+            try {
+                if (!sessionReady) {
+                    await ensureSession(false);
+                }
+
+                const response = await fetch(API_BASE + '/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId,
+                        user_id: userId
+                    })
+                });
+
+                const data = await response.json();
+                loadingEl.remove();
+
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                    sessionStorage.setItem(SESSION_KEY, sessionId);
+                    sessionReady = true;
+                    updateSessionLabel();
+                }
+
+                if (data.tool_events && data.tool_events.length) {
+                    data.tool_events.forEach(ev => {
+                        const el = document.createElement('div');
+                        el.className = 'msg tool';
+                        el.innerHTML = '<span class="tool-name">' + ev.type + '</span><br>' +
+                            formatToolEvent(ev).replace(/\n/g, '<br>');
+                        document.getElementById('chat-messages').appendChild(el);
+                    });
+                    scrollBottom();
+                }
+
+                addMessage(data.reply || '(无回复)', 'bot');
+                if (data.error) {
+                    addMessage('错误详情: ' + data.error, 'bot');
+                }
+            } catch (err) {
+                loadingEl.remove();
+                addMessage('请求失败：请确认已运行 python local_node/widget_server.py', 'bot');
+            } finally {
+                btn.disabled = false;
+                input.focus();
+            }
+        }
+
+        updateSessionLabel();
+        // 若从 http://localhost:8000/ 打开，页面加载即续接 session
+        if (window.location.port === '8000') {
+            initSession();
+        }
+    </script>
+</body>
+</html>

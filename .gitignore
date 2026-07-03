@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+venv/
+
+# ADK local session
+.adk/
+*.db
+
+# Secrets & local state
+.env
+bilibili_state.json
+agent_memory.json
+cloud_agent_memory.json
+
+# ADK deploy temp dirs
+cloud_agent_tmp*/
+cloud_agent_mcp_tmp*/
+
+# OS
+.DS_Store
