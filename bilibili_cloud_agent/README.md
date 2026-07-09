@@ -52,7 +52,7 @@ BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001 ./scripts/run_adk_bilibili_cloud_
 ## 与调度树的关系
 
 - **单跑 B 站**：用本目录（REST）或 `bilibili_cloud_agent_mcp`（MCP，推荐）
-- **葫芦娃调度**：用 [`smart_agents`](../smart_agents/)，B 站子 Agent 走 **MCP** 路径
+- **调度树**：用 [`smart_agents`](../smart_agents/)，B 站子 Agent 走 **MCP** 路径
 
 ## 部署到 Agent Engine
 

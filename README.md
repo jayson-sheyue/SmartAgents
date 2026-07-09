@@ -1,6 +1,6 @@
 # SmartAgents
 
-多领域 **RPA + ADK Agent** 演示项目：B 站粉丝采集、Etsy 评论导出，经 **调度树（葫芦娃）** 或 **单领域 Agent** 接入；支持本地 `adk run`、云端 Agent Engine、飞书群聊、Web Widget。
+多领域 **RPA + ADK Agent** 演示项目：B 站粉丝采集、Etsy 评论导出，经 **调度树（Dispatcher + 子 Agent）** 或 **单领域 Agent** 接入；支持本地 `adk run`、云端 Agent Engine、飞书群聊、Web Widget。
 
 > **从哪开始？** 看下方 [模块地图](#模块地图) 选场景 → 点进对应 README。  
 > **全场景操作手册**（勾选清单 + 命令矩阵）：[`user_guide.md`](user_guide.md)  

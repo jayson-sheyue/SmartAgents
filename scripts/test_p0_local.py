@@ -23,8 +23,8 @@ P0 本地冒烟测试脚本（不经过大模型，直接调用 rpa_tools.py）
 
 【怎么用？】
   python scripts/test_p0_local.py
-  python scripts/test_p0_local.py --live-fetch --up-name "老番茄"
-  python scripts/test_p0_local.py --live-fetch --write-after-fetch --up-name "老番茄"
+  python scripts/test_p0_local.py --live-fetch --up-name "示例UP主"
+  python scripts/test_p0_local.py --live-fetch --write-after-fetch --up-name "示例UP主"
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ def main() -> int:
     # -----------------------------------------------------------------------
     # 命令行参数（CLI flags）—— 用 argparse 解析你在终端敲的 --xxx
     # -----------------------------------------------------------------------
-    # 例如：python scripts/test_p0_local.py --live-fetch --up-name "老番茄"
-    # 会被解析成 args.live_fetch=True, args.up_name="老番茄"
+    # 例如：python scripts/test_p0_local.py --live-fetch --up-name "示例UP主"
+    # 会被解析成 args.live_fetch=True, args.up_name="示例UP主"
     parser = argparse.ArgumentParser(
         description="P0 rpa_tools 本地测试（详见本文件顶部文档字符串）"
     )
@@ -67,8 +67,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--up-name",
-        default="老番茄",
-        help="--live-fetch 时要抓取哪个 UP 主（默认：老番茄）",
+        default="示例UP主",
+        help="--live-fetch 时要抓取哪个 UP 主（默认：示例UP主）",
     )
     parser.add_argument(
         "--write-after-fetch",

@@ -237,7 +237,7 @@ SMART_AGENTS_ENGINE_ID=<你的 Engine ID>
 
 #### B) cloud 模式（连 Agent Engine）
 
-**cloud = 大脑在云端**；RPA 仍在本机（经 MCP + 隧道）。
+**cloud 模式**：推理与编排运行在云端 Agent Engine；RPA 仍在本机（经 MCP + 隧道）。
 
 ```
 浏览器 → widget :8000 → Vertex Agent Engine（云端）

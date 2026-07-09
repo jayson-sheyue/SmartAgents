@@ -28,7 +28,7 @@ async def main():
 
             # 3. 模拟大模型调用: 执行 fetch_fans_data 工具
             print("\n🤖 模拟 Agent 调用工具 -> [fetch_fans_data]")
-            result = await session.call_tool("fetch_fans_data", arguments={"up_name": "老番茄"})
+            result = await session.call_tool("fetch_fans_data", arguments={"up_name": "示例UP主"})
             
             # 解析并打印结果 (MCP 协议返回的是结构化的 Content 对象)
             # 为了方便看，我们将其内容格式化输出

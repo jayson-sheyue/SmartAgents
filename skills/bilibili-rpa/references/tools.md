@@ -43,7 +43,7 @@
 
 ```json
 {
-  "up_name": "老番茄",
+  "up_name": "示例UP主",
   "status": "success",
   "fans_count_raw": "1800万",
   "fans_count_display": "1800万",

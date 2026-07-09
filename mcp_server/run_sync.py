@@ -27,7 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from rpa_tools import tool_fetch_fans_data
 
 if __name__ == "__main__":
-    # 支持可选 flag：python run_sync.py --dry-run "老番茄"
+    # 支持可选 flag：python run_sync.py --dry-run "示例UP主"
     args = [a for a in sys.argv[1:] if a != "--dry-run"]
     dry_run = "--dry-run" in sys.argv[1:]
 

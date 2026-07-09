@@ -120,7 +120,7 @@ write_excel(
 ## 示例用户意图
 
 - 「用桌面默认表抓全部 UP 主并写回」→ get_up_list → 循环 fetch → write
-- 「只查老番茄，别写表」→ 仅 fetch，步骤 4 口头报告
+- 「只查某 UP 主，别写表」→ 仅 fetch，步骤 4 口头报告
 - 「查完把某某 UP 追加到表里」→ fetch + write(mode=append_if_missing)
 
 详细参数见 `references/tools.md`。

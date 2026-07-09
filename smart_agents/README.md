@@ -1,6 +1,6 @@
 # SmartAgents — 调度树（Dispatcher + 双 MCP 子 Agent）
 
-葫芦娃架构：**秘书小智** 接待闲聊、知识库与记忆，并路由到 **阿B**（B 站）、**E姐**（Etsy）；RPA 执行仍在 **本机 MCP**。
+**Dispatcher 调度树**：根 Agent（小智）负责接待、知识库与记忆，并路由到 B 站专家（阿B）与 Etsy 专家（E姐）；RPA 执行在本机 MCP。
 
 ## 架构
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-smart_agents/agent.py — 葫芦娃调度 Agent（Dispatcher + 双 MCP 子 Agent）
+smart_agents/agent.py — 调度树 Dispatcher（根 Agent + 双 MCP 子 Agent）
 
 【架构】
   SmartAgents_Dispatcher（根）
