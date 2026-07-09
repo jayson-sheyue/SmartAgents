@@ -1,0 +1,8 @@
+google-adk>=2.3.0
+google-cloud-aiplatform
+google-genai
+python-dotenv
+httpx
+pandas
+openpyxl
+playwright

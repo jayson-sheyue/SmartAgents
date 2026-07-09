@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bilibili Agent Web Widget</title>
+    <title>SmartAgents Widget</title>
     <style>
         :root {
             --bili-blue: #00a1d6;
@@ -78,18 +78,18 @@
 </head>
 <body>
 
-    <div id="widget-button" onclick="toggleChat()" title="B站数据小助手">💬</div>
+    <div id="widget-button" onclick="toggleChat()" title="SmartAgents 调度助手">💬</div>
 
     <div id="chat-panel">
         <div class="chat-header">
             <div class="chat-header-main">
-                B站数据小助手
-                <div class="chat-sub" id="session-label">REST Cloud Agent · 连接中…</div>
+                SmartAgents 调度助手
+                <div class="chat-sub" id="session-label">连接中…</div>
             </div>
             <button type="button" id="new-session-btn" onclick="startNewSession()" title="清空本地会话并新建云端 Session">新会话</button>
         </div>
         <div id="chat-messages">
-            <div class="msg bot">你好！我是 B 站数据分析 Agent（云端 REST + 本地 RPA）。&#10;例如：查一下某 UP 主粉丝数并写入 Excel。</div>
+            <div class="msg bot">您好！我是 SmartAgents 调度助手。&#10;我可以为您分发到 B 站专家或 Etsy 专家来完成任务。</div>
         </div>
         <div class="chat-input-area">
             <input type="text" id="chat-input" placeholder="输入指令…" onkeypress="handleEnter(event)">
@@ -99,15 +99,22 @@
 
     <script>
         const API_BASE = (window.location.port === '8000') ? '' : 'http://localhost:8000';
-        const userId = 'web_user_001';
+        const USER_KEY = 'smart_agents_widget_user_id';
         const SESSION_KEY = 'bilibili_widget_session';
+        let userId = sessionStorage.getItem(USER_KEY);
+        if (!userId) {
+            userId = 'web_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+            sessionStorage.setItem(USER_KEY, userId);
+        }
         let sessionId = sessionStorage.getItem(SESSION_KEY) || null;
         let sessionReady = false;
+        let runMode = 'unknown';
+        let modeLabel = 'SmartAgents';
 
         function updateSessionLabel(extra) {
             const el = document.getElementById('session-label');
             const sid = sessionId ? ('session ' + sessionId.slice(0, 12) + '…') : '未连接';
-            el.textContent = 'REST Cloud Agent · ' + sid + (extra ? ' · ' + extra : '');
+            el.textContent = modeLabel + ' · ' + sid + (extra ? ' · ' + extra : '');
         }
 
         async function ensureSession(forceNew) {
@@ -129,6 +136,10 @@
                 sessionStorage.setItem(SESSION_KEY, sessionId);
                 sessionReady = true;
             }
+            if (data.user_id) {
+                userId = data.user_id;
+                sessionStorage.setItem(USER_KEY, userId);
+            }
             return data;
         }
 
@@ -136,6 +147,8 @@
             try {
                 const r = await fetch(API_BASE + '/health');
                 const h = await r.json();
+                runMode = h.mode || 'unknown';
+                modeLabel = runMode === 'cloud' ? 'SmartAgents（云端）' : 'SmartAgents（本地）';
                 const rest = h.rest_node_reachable ? 'REST :8001 ✓' : 'REST :8001 ✗';
                 updateSessionLabel(rest);
             } catch (e) {
@@ -215,14 +228,18 @@
             input.value = '';
             btn.disabled = true;
 
-            const loadingEl = addMessage('正在连接云端 Agent 并执行…', 'bot loading');
+            const loadingEl = addMessage(
+                runMode === 'cloud' ? '正在连接云端调度树并执行…' : '正在连接本地调度树并执行…',
+                'bot loading'
+            );
+            let streamMsgEl = null;
 
             try {
                 if (!sessionReady) {
                     await ensureSession(false);
                 }
 
-                const response = await fetch(API_BASE + '/chat', {
+                const response = await fetch(API_BASE + '/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -232,30 +249,53 @@
                     })
                 });
 
-                const data = await response.json();
                 loadingEl.remove();
+                streamMsgEl = addMessage('', 'bot');
 
-                if (data.session_id) {
-                    sessionId = data.session_id;
-                    sessionStorage.setItem(SESSION_KEY, sessionId);
-                    sessionReady = true;
-                    updateSessionLabel();
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let gotText = false;
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        let ev;
+                        try {
+                            ev = JSON.parse(line);
+                        } catch (_) {
+                            continue;
+                        }
+                        if (ev.type === 'session' && ev.session_id) {
+                            sessionId = ev.session_id;
+                            sessionStorage.setItem(SESSION_KEY, sessionId);
+                            sessionReady = true;
+                            updateSessionLabel();
+                        } else if (ev.type === 'text') {
+                            gotText = true;
+                            streamMsgEl.innerText += ev.text || '';
+                            scrollBottom();
+                        } else if (ev.type === 'tool_event' && ev.event) {
+                            const toolEv = ev.event;
+                            const el = document.createElement('div');
+                            el.className = 'msg tool';
+                            el.innerHTML = '<span class="tool-name">' + toolEv.type + '</span><br>' +
+                                formatToolEvent(toolEv).replace(/\n/g, '<br>');
+                            document.getElementById('chat-messages').appendChild(el);
+                            scrollBottom();
+                        } else if (ev.type === 'error') {
+                            addMessage('错误详情: ' + (ev.error || '未知错误'), 'bot');
+                        }
+                    }
                 }
-
-                if (data.tool_events && data.tool_events.length) {
-                    data.tool_events.forEach(ev => {
-                        const el = document.createElement('div');
-                        el.className = 'msg tool';
-                        el.innerHTML = '<span class="tool-name">' + ev.type + '</span><br>' +
-                            formatToolEvent(ev).replace(/\n/g, '<br>');
-                        document.getElementById('chat-messages').appendChild(el);
-                    });
-                    scrollBottom();
-                }
-
-                addMessage(data.reply || '(无回复)', 'bot');
-                if (data.error) {
-                    addMessage('错误详情: ' + data.error, 'bot');
+                if (!gotText && streamMsgEl && !streamMsgEl.innerText.trim()) {
+                    streamMsgEl.innerText = '（任务已执行，暂无文字说明。）';
                 }
             } catch (err) {
                 loadingEl.remove();

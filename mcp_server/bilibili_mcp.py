@@ -11,15 +11,15 @@ mcp_server/bilibili_mcp.py — MCP 协议层（把 rpa_tools 暴露成 MCP Tools
   1) 不加 --http（默认）—— stdio 模式
      - Cursor 通过 .cursor/mcp.json 启动：python mcp_server/bilibili_mcp.py
      - 通过「标准输入/输出管道」传 JSON-RPC，不走网络
-     - **不需要 ngrok**，本机进程间通信
+     - **不需要隧道**，本机进程间通信
 
   2) 加 --http —— HTTP 模式
      - python mcp_server/bilibili_mcp.py --http
-     - 监听 8002 端口，供云端 cloud_agent_mcp + ngrok 调用
+     - 监听 8002 端口，供云端 bilibili_cloud_agent_mcp + Cloudflare Tunnel 调用
 
 【和 REST 的关系】
-  三个工具（get_up_list / fetch_fans_data / write_excel）参数与 rpa_tools 一致；
-  本文件 mostly 是「薄包装」，真正逻辑在 rpa_tools.py。
+  三个工具（get_up_list / fetch_fans_data / write_excel）参数与 bilibili_tools 一致；
+  本文件 mostly 是「薄包装」，真正逻辑在 bilibili_agent/bilibili_tools.py（rpa_tools 为兼容 re-export）。
 """
 
 import sys
@@ -33,12 +33,16 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from mcp_server.tunnel_hosts import resolve_tunnel_host
 from rpa_tools import tool_fetch_fans_data, tool_get_up_list, tool_write_excel
 
-load_dotenv()  # 读取项目根目录 .env（如 NGROK_HOST）
+load_dotenv()
 
-# ngrok 免费域名（不含 https://），HTTP 模式时用于 Host 白名单，否则云端请求会被 421 拒绝
-NGROK_HOST = os.getenv("NGROK_HOST", "")
+# Cloudflare Tunnel 公网域名（不含 https://），HTTP 模式时用于 Host 白名单
+BILIBILI_TUNNEL_HOST = resolve_tunnel_host(
+    host_var="BILIBILI_TUNNEL_HOST",
+    url_var="BILIBILI_MCP_SERVER_URL",
+)
 
 # 创建 MCP 服务器实例；名字会显示在 Cursor 的 MCP 列表里
 mcp = FastMCP("Bilibili RPA MCP Server")
@@ -175,10 +179,10 @@ def write_excel(
 
 if __name__ == "__main__":
     if "--http" in sys.argv:
-        # HTTP 模式：给云端 Agent + ngrok 用
+        # HTTP 模式：给云端 Agent + Cloudflare Tunnel 用
         mcp.settings.host = "0.0.0.0"
         mcp.settings.port = 8002
-        # FastMCP 默认只允许 localhost Host；ngrok 转发时 Host 是公网域名，必须加白名单
+        # FastMCP 默认只允许 localhost Host；隧道转发时 Host 是公网域名，必须加白名单
         allowed_hosts = [
             "127.0.0.1:*",
             "localhost:*",
@@ -188,11 +192,15 @@ if __name__ == "__main__":
             "http://127.0.0.1:*",
             "http://localhost:*",
         ]
-        if NGROK_HOST:
-            allowed_hosts.extend([NGROK_HOST, f"{NGROK_HOST}:*"])
-            allowed_origins.append(f"https://{NGROK_HOST}")
+        if BILIBILI_TUNNEL_HOST:
+            allowed_hosts.extend([BILIBILI_TUNNEL_HOST, f"{BILIBILI_TUNNEL_HOST}:*"])
+            allowed_origins.append(f"https://{BILIBILI_TUNNEL_HOST}")
+            print(f"🌐 Bilibili MCP 隧道 Host 白名单：{BILIBILI_TUNNEL_HOST}")
         else:
-            print("⚠️ 未配置 NGROK_HOST，云端经 ngrok 访问可能报 421 Invalid Host")
+            print(
+                "⚠️ 未配置 BILIBILI_TUNNEL_HOST（且无法从 BILIBILI_MCP_SERVER_URL 解析），"
+                "云端经隧道访问将 421。请先 source .env 再启动，或更新 .env 后重启本进程。"
+            )
         mcp.settings.transport_security = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=allowed_hosts,

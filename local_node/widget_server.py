@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-local_node/widget_server.py — Web Widget 中转（Phase 2c）
+local_node/widget_server.py — Web Widget 中转（SmartAgents）
 
 【干什么用？】
   浏览器 index.html 不直接调 RPA，也不直接调 Gemini；
-  它 POST 到本服务 :8000/chat，由本服务代叫 GCP Agent Engine（REST Agent），
-  Agent 再通过 ngrok 调 local_node/server.py :8001。
+  它 POST 到本服务 :8000/chat，由本服务代叫 GCP Agent Engine（默认 smart_agents），
+  调度树再通过 MCP 调本机 B 站/Etsy 节点。
 
 【调用链】
-  index.html → widget_server :8000 → Vertex streamQuery → cloud_agent
-            → NGROK_URL/api/* → server.py → rpa_tools.py
+  index.html → widget_server :8000 → Vertex streamQuery → smart_agents
+            → BILIBILI_MCP_SERVER_URL / ETSY_MCP_SERVER_URL → MCP Servers
 
 【配置 .env】
-  REST_AGENT_ENGINE_ID=<见 .env.example>
+  SMART_AGENTS_ENGINE_ID=<cloud 模式必填；local 模式可留空>
+  # 或显式 AGENT_RESOURCE_NAME=projects/.../reasoningEngines/...
   GCP_PROJECT_NUMBER=<见 .env.example>
   GCP_PROJECT_ID=<见 .env.example>
   GCP_LOCATION=us-central1
@@ -21,9 +22,12 @@ local_node/widget_server.py — Web Widget 中转（Phase 2c）
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
+import sys
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -35,26 +39,52 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from google.adk.artifacts.in_memory_artifact_service import InMemoryArtifactService
+from google.adk.auth.credential_service.in_memory_credential_service import (
+    InMemoryCredentialService,
+)
+from google.adk.runners import Runner
+from google.adk.sessions.base_session_service import BaseSessionService
+from google.adk.sessions.database_session_service import DatabaseSessionService
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.utils.context_utils import Aclosing
+from google.genai import types
 from pydantic import BaseModel
 
-# 加载项目根 .env
+# 确保以 `python local_node/widget_server.py` 启动时也能导入项目包（integrations/smart_agents）
 _ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+# 加载项目根 .env
 load_dotenv(_ROOT / ".env")
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID") or os.getenv("PROJECT_ID", "")
 LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 GCP_PROJECT_NUMBER = os.getenv("GCP_PROJECT_NUMBER", "")
-REST_AGENT_ENGINE_ID = os.getenv("REST_AGENT_ENGINE_ID", "")
+SMART_AGENTS_ENGINE_ID = os.getenv("SMART_AGENTS_ENGINE_ID", "").strip()
+WIDGET_RUN_MODE = os.getenv("WIDGET_RUN_MODE", "local").strip().lower()
 
-if not PROJECT_ID or not GCP_PROJECT_NUMBER or not REST_AGENT_ENGINE_ID:
-    raise RuntimeError(
-        "请在 .env 中设置 GCP_PROJECT_ID、GCP_PROJECT_NUMBER、REST_AGENT_ENGINE_ID"
+if WIDGET_RUN_MODE not in {"local", "cloud"}:
+    raise RuntimeError("WIDGET_RUN_MODE 仅支持 local / cloud")
+
+if not PROJECT_ID:
+    raise RuntimeError("请在 .env 中设置 GCP_PROJECT_ID")
+
+AGENT_RESOURCE_NAME = ""
+if WIDGET_RUN_MODE == "cloud":
+    if not GCP_PROJECT_NUMBER:
+        raise RuntimeError("cloud 模式请在 .env 中设置 GCP_PROJECT_NUMBER")
+    _default_engine_id = SMART_AGENTS_ENGINE_ID
+    if not _default_engine_id and not os.getenv("AGENT_RESOURCE_NAME"):
+        raise RuntimeError(
+            "cloud 模式请设置 AGENT_RESOURCE_NAME，或在 .env 中配置 SMART_AGENTS_ENGINE_ID"
+        )
+    AGENT_RESOURCE_NAME = os.getenv(
+        "AGENT_RESOURCE_NAME",
+        f"projects/{GCP_PROJECT_NUMBER}/locations/{LOCATION}/reasoningEngines/{_default_engine_id}",
     )
-
-AGENT_RESOURCE_NAME = os.getenv(
-    "AGENT_RESOURCE_NAME",
-    f"projects/{GCP_PROJECT_NUMBER}/locations/{LOCATION}/reasoningEngines/{REST_AGENT_ENGINE_ID}",
-)
 
 WIDGET_PORT = int(os.getenv("WIDGET_PORT", "8000"))
 REST_NODE_PORT = int(os.getenv("REST_NODE_PORT", "8001"))
@@ -74,7 +104,7 @@ _gcp_session.trust_env = False
 if _VERTEX_PROXY:
     _gcp_session.proxies = {"http": _VERTEX_PROXY, "https": _VERTEX_PROXY}
 
-app = FastAPI(title="Bilibili Widget Gateway", version="2.0.0")
+app = FastAPI(title="SmartAgents Widget Gateway", version="2.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -83,6 +113,18 @@ app.add_middleware(
 )
 
 _STATIC_DIR = Path(__file__).resolve().parent
+
+# local 模式下复用同一个 runner，避免每次请求重建
+_LOCAL_RUNNER: Optional[Runner] = None
+_LOCAL_SESSION_SERVICE: Optional[BaseSessionService] = None
+_LOCAL_RUNNER_LOCK = asyncio.Lock()
+_STREAM_LOCKS: dict[str, asyncio.Lock] = {}
+
+_AGENT_LABELS: dict[str, str] = {
+    "SmartAgents_Dispatcher": "小智",
+    "Bilibili_Cloud_MCP_Agent": "阿B",
+    "Etsy_Cloud_MCP_Agent": "E姐",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +148,102 @@ def _agent_engine_api_base() -> str:
         f"https://{LOCATION}-aiplatform.googleapis.com/v1beta1/"
         f"{AGENT_RESOURCE_NAME}"
     )
+
+
+def _build_local_runner() -> tuple[Runner, BaseSessionService]:
+    from integrations.feishu.config import apply_agent_env  # 延迟导入，避免循环依赖
+    from smart_agents.agent import root_agent
+    from smart_agents.app_factory import build_smart_agents_app
+
+    # 与 smart_agents 脚本行为一致：本地默认双 MCP
+    os.environ.setdefault("BILIBILI_MCP_SERVER_URL", "http://127.0.0.1:8002/mcp")
+    os.environ.setdefault("ETSY_MCP_SERVER_URL", "http://127.0.0.1:8003/mcp")
+    apply_agent_env(
+        type(
+            "_Cfg",
+            (),
+            {
+                "mcp_server_url": os.environ["BILIBILI_MCP_SERVER_URL"],
+                "etsy_mcp_server_url": os.environ["ETSY_MCP_SERVER_URL"],
+            },
+        )()
+    )
+
+    app_obj = build_smart_agents_app(
+        name="smart_agents_widget_local",
+        root_agent=root_agent,
+        enable_memory=False,
+    )
+
+    try:
+        db_dir = _ROOT / "local_node" / "data"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        session_service: BaseSessionService = DatabaseSessionService(
+            db_url=f"sqlite:///{db_dir / 'widget_sessions.db'}"
+        )
+    except Exception:
+        session_service = InMemorySessionService()
+
+    runner = Runner(
+        app=app_obj,
+        session_service=session_service,
+        artifact_service=InMemoryArtifactService(),
+        memory_service=None,
+        credential_service=InMemoryCredentialService(),
+    )
+    return runner, session_service
+
+
+async def _get_or_create_local_runner() -> tuple[Runner, BaseSessionService]:
+    global _LOCAL_RUNNER, _LOCAL_SESSION_SERVICE
+    async with _LOCAL_RUNNER_LOCK:
+        if _LOCAL_RUNNER is None or _LOCAL_SESSION_SERVICE is None:
+            _LOCAL_RUNNER, _LOCAL_SESSION_SERVICE = _build_local_runner()
+    return _LOCAL_RUNNER, _LOCAL_SESSION_SERVICE
+
+
+async def _ensure_local_session(
+    session_service: BaseSessionService, *, user_id: str, session_id: Optional[str]
+) -> str:
+    sid = session_id or f"web_{uuid.uuid4().hex[:12]}"
+    session = await session_service.get_session(
+        app_name="smart_agents_widget_local", user_id=user_id, session_id=sid
+    )
+    if session is None:
+        await session_service.create_session(
+            app_name="smart_agents_widget_local", user_id=user_id, session_id=sid
+        )
+    return sid
+
+
+async def _run_local_query(message: str, *, user_id: str, session_id: str) -> dict:
+    runner, session_service = await _get_or_create_local_runner()
+    text_parts: list[str] = []
+    last_author: Optional[str] = None
+    by_author: dict[str, list[str]] = {}
+
+    await _ensure_local_session(session_service, user_id=user_id, session_id=session_id)
+    content = types.Content(role="user", parts=[types.Part(text=message)])
+    async with Aclosing(
+        runner.run_async(user_id=user_id, session_id=session_id, new_message=content)
+    ) as agen:
+        async for event in agen:
+            if not event.content or not event.content.parts:
+                continue
+            texts = [p.text for p in event.content.parts if getattr(p, "text", None)]
+            if not texts:
+                continue
+            author = event.author or "agent"
+            last_author = author
+            by_author.setdefault(author, []).extend(texts)
+            text_parts.extend(texts)
+
+    reply = ""
+    if last_author and last_author in by_author:
+        reply = "".join(by_author[last_author]).strip()
+    if not reply:
+        reply = "".join(text_parts).strip() or "（任务已执行，暂无文字说明。）"
+    return {"reply": reply, "session_id": session_id, "tool_events": [], "error": None}
 
 
 def _auth_headers() -> dict[str, str]:
@@ -198,30 +336,55 @@ def _summarize_tool_response(response: Any) -> str:
     return json.dumps(response, ensure_ascii=False)[:200]
 
 
+def _stream_lock_key(user_id: str, session_id: str) -> str:
+    return f"{user_id}:{session_id}"
+
+
+def _get_stream_lock(key: str) -> asyncio.Lock:
+    if key not in _STREAM_LOCKS:
+        _STREAM_LOCKS[key] = asyncio.Lock()
+    return _STREAM_LOCKS[key]
+
+
+def _reply_from_stream_state(state: dict[str, Any]) -> str:
+    """与飞书 cloud 一致：取本轮最后发言 Agent 的文本。"""
+    by_author: dict[str, list[str]] = state.get("by_author") or {}
+    last_author = state.get("last_author")
+    if last_author and last_author in by_author:
+        return "".join(by_author[last_author]).strip()
+    if by_author:
+        return "".join(list(by_author.values())[-1]).strip()
+    return "".join(state.get("text_parts") or []).strip()
+
+
 def _consume_stream_event(event_data: dict, state: dict) -> None:
     """从 Agent Engine 流式 JSON 里抽取文本、工具调用。"""
     if not isinstance(event_data, dict):
         return
 
-    # 部分部署可能在事件里带 session_id（不可靠，主路径用 ensure_session）
     for key in ("session_id", "sessionId"):
         if event_data.get(key):
             state["session_id"] = event_data[key]
 
-    # 部分事件在 output 里嵌套
     candidates = [event_data]
     if isinstance(event_data.get("output"), dict):
         candidates.append(event_data["output"])
 
     for obj in candidates:
+        if obj.get("partial") is True:
+            continue
         content = obj.get("content")
         if not isinstance(content, dict):
             continue
+        author = obj.get("author") or "agent"
         for part in content.get("parts") or []:
             if not isinstance(part, dict):
                 continue
             if "text" in part and part["text"]:
-                state["text_parts"].append(part["text"])
+                text = part["text"]
+                state.setdefault("by_author", {}).setdefault(author, []).append(text)
+                state["last_author"] = author
+                state.setdefault("text_parts", []).append(text)
             if "function_call" in part:
                 fc = part["function_call"] or {}
                 state["tool_events"].append({
@@ -238,6 +401,10 @@ def _consume_stream_event(event_data: dict, state: dict) -> None:
                     "ok": resp.get("ok") if isinstance(resp, dict) else None,
                     "summary": _summarize_tool_response(resp),
                 })
+
+
+def _jsonl(data: dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=False) + "\n"
 
 
 def stream_agent_reply(
@@ -260,6 +427,8 @@ def stream_agent_reply(
 
     state: dict[str, Any] = {
         "text_parts": [],
+        "by_author": {},
+        "last_author": None,
         "tool_events": [],
         "session_id": session_id,
     }
@@ -287,12 +456,12 @@ def stream_agent_reply(
         except json.JSONDecodeError:
             continue
 
-    reply = "".join(state["text_parts"]).strip()
+    reply = _reply_from_stream_state(state)
     if not reply:
         if state["tool_events"]:
             reply = "任务已执行，模型未返回额外文字说明（请查看下方工具步骤）。"
         else:
-            reply = "未收到文本回复，请确认 server.py + ngrok 已启动。"
+            reply = "未收到文本回复，请确认 server.py 与 Cloudflare Tunnel 已启动。"
 
     return {
         "reply": reply,
@@ -306,15 +475,23 @@ def stream_agent_reply(
 # HTTP 路由
 # ---------------------------------------------------------------------------
 
+def _resolve_widget_user_id(user_id: Optional[str]) -> str:
+    """Widget 匿名访客：每个浏览器 tab 使用独立随机 user_id（无 Memory Bank）。"""
+    raw = (user_id or "").strip()
+    if raw and raw != "web_user_001":
+        return raw
+    return f"web_{uuid.uuid4().hex[:16]}"
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
-    user_id: str = "web_user_001"
+    user_id: str = ""
 
 
 class SessionRequest(BaseModel):
     session_id: Optional[str] = None
-    user_id: str = "web_user_001"
+    user_id: str = ""
     force_new: bool = False
 
 
@@ -333,11 +510,20 @@ def health():
     sock.close()
     return {
         "widget": "ok",
+        "mode": WIDGET_RUN_MODE,
         "rest_node_port": REST_NODE_PORT,
         "rest_node_reachable": rest_ok,
-        "agent_engine": AGENT_RESOURCE_NAME,
+        "agent_engine": AGENT_RESOURCE_NAME if WIDGET_RUN_MODE == "cloud" else "local_runner",
         "vertex_proxy": _VERTEX_PROXY,
     }
+
+
+@app.on_event("shutdown")
+async def _shutdown_local_runner() -> None:
+    global _LOCAL_RUNNER
+    if _LOCAL_RUNNER is not None:
+        await _LOCAL_RUNNER.close()
+        _LOCAL_RUNNER = None
 
 
 @app.post("/session")
@@ -348,9 +534,14 @@ def get_or_create_session(req: SessionRequest):
     force_new=true 时跳过校验，强制新建 session。
     """
     try:
+        uid = _resolve_widget_user_id(req.user_id)
         sid = None if req.force_new else req.session_id
-        session_id = ensure_session(req.user_id, sid)
-        return {"session_id": session_id, "user_id": req.user_id, "error": None}
+        if WIDGET_RUN_MODE == "cloud":
+            session_id = ensure_session(uid, sid)
+        else:
+            # local 模式下，session 在本地 runner 的 sqlite/in-memory 中维护
+            session_id = sid or f"web_{uuid.uuid4().hex[:12]}"
+        return {"session_id": session_id, "user_id": uid, "error": None}
     except Exception as exc:
         print(f"[Widget] /session 错误: {exc}")
         return {
@@ -361,14 +552,21 @@ def get_or_create_session(req: SessionRequest):
 
 
 @app.post("/chat")
-def chat_with_agent(req: ChatRequest):
+async def chat_with_agent(req: ChatRequest):
     print(
         f"[Widget] user={req.user_id} session={req.session_id or '(resolve)'} "
         f"msg={req.message[:80]}"
     )
     try:
-        session_id = ensure_session(req.user_id, req.session_id)
-        result = stream_agent_reply(req.message, req.user_id, session_id)
+        uid = _resolve_widget_user_id(req.user_id)
+        if WIDGET_RUN_MODE == "cloud":
+            session_id = ensure_session(uid, req.session_id)
+            result = stream_agent_reply(req.message, uid, session_id)
+        else:
+            session_id = req.session_id or f"web_{uuid.uuid4().hex[:12]}"
+            result = await _run_local_query(
+                req.message, user_id=uid, session_id=session_id
+            )
         result["session_id"] = session_id
         if result.get("tool_events"):
             for ev in result["tool_events"]:
@@ -384,23 +582,166 @@ def chat_with_agent(req: ChatRequest):
         }
 
 
+@app.post("/chat/stream")
+async def chat_with_agent_stream(req: ChatRequest):
+    async def event_stream():
+        uid = _resolve_widget_user_id(req.user_id)
+        if WIDGET_RUN_MODE == "cloud":
+            session_id = ensure_session(uid, req.session_id)
+        else:
+            session_id = req.session_id or f"web_{uuid.uuid4().hex[:12]}"
+        lock = _get_stream_lock(_stream_lock_key(uid, session_id))
+        if lock.locked():
+            yield _jsonl(
+                {
+                    "type": "error",
+                    "error": "上一条消息仍在处理中，请稍候再发。",
+                }
+            )
+            return
+        async with lock:
+            try:
+                yield _jsonl({"type": "session", "session_id": session_id, "user_id": uid})
+
+                if WIDGET_RUN_MODE == "cloud":
+                    url = f"{_agent_engine_api_base()}:streamQuery"
+                    payload_input: dict[str, Any] = {
+                        "message": req.message,
+                        "user_id": uid,
+                        "session_id": session_id,
+                    }
+                    data = {"class_method": "async_stream_query", "input": payload_input}
+                    state: dict[str, Any] = {
+                        "text_parts": [],
+                        "by_author": {},
+                        "last_author": None,
+                        "tool_events": [],
+                        "session_id": session_id,
+                    }
+                    response = _gcp_session.post(
+                        url, headers=_auth_headers(), json=data, stream=True, timeout=300
+                    )
+                    if response.status_code != 200:
+                        yield _jsonl(
+                            {
+                                "type": "error",
+                                "error": f"云端 Agent 调用失败 (HTTP {response.status_code})",
+                                "detail": response.text[:500],
+                            }
+                        )
+                        return
+                    last_stream_author: Optional[str] = None
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        line_str = line.decode("utf-8")
+                        if line_str.startswith("data: "):
+                            line_str = line_str[6:]
+                        try:
+                            event_data = json.loads(line_str)
+                        except json.JSONDecodeError:
+                            continue
+                        before_counts = {
+                            a: len(chunks)
+                            for a, chunks in (state.get("by_author") or {}).items()
+                        }
+                        before_tool_len = len(state["tool_events"])
+                        _consume_stream_event(event_data, state)
+                        for author, chunks in (state.get("by_author") or {}).items():
+                            start = before_counts.get(author, 0)
+                            for chunk in chunks[start:]:
+                                label = _AGENT_LABELS.get(author, author)
+                                prefix = ""
+                                if author != last_stream_author:
+                                    prefix = f"【{label}】"
+                                    last_stream_author = author
+                                yield _jsonl(
+                                    {
+                                        "type": "text",
+                                        "text": prefix + chunk,
+                                        "author": author,
+                                        "author_label": label,
+                                    }
+                                )
+                        for ev in state["tool_events"][before_tool_len:]:
+                            yield _jsonl({"type": "tool_event", "event": ev})
+
+                    yield _jsonl(
+                        {
+                            "type": "done",
+                            "session_id": state.get("session_id") or session_id,
+                            "author": state.get("last_author"),
+                        }
+                    )
+                    return
+
+                runner, session_service = await _get_or_create_local_runner()
+                await _ensure_local_session(
+                    session_service, user_id=uid, session_id=session_id
+                )
+                content = types.Content(role="user", parts=[types.Part(text=req.message)])
+                async with Aclosing(
+                    runner.run_async(
+                        user_id=uid, session_id=session_id, new_message=content
+                    )
+                ) as agen:
+                    async for event in agen:
+                        if not event.content or not event.content.parts:
+                            continue
+                        author = event.author or "agent"
+                        for part in event.content.parts:
+                            txt = getattr(part, "text", None)
+                            if txt:
+                                yield _jsonl(
+                                    {
+                                        "type": "text",
+                                        "text": txt,
+                                        "author": author,
+                                        "author_label": _AGENT_LABELS.get(author, author),
+                                    }
+                                )
+                yield _jsonl({"type": "done", "session_id": session_id})
+            except Exception as exc:
+                yield _jsonl({"type": "error", "error": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
 def _preflight_checks() -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1)
-    if sock.connect_ex(("127.0.0.1", REST_NODE_PORT)) != 0:
-        print(
-            f"⚠️  本地 :{REST_NODE_PORT} 未启动，Agent 调 RPA 会失败。\n"
-            f"    请先: python local_node/server.py"
-        )
+    def _port_open(port: int) -> bool:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        ok = sock.connect_ex(("127.0.0.1", port)) == 0
+        sock.close()
+        return ok
+
+    if WIDGET_RUN_MODE == "cloud":
+        b_ok = _port_open(8002)
+        e_ok = _port_open(8003)
+        print(f"{'✅' if b_ok else '⚠️'} Bilibili MCP :8002 {'就绪' if b_ok else '未启动'}")
+        print(f"{'✅' if e_ok else '⚠️'} Etsy MCP :8003 {'就绪' if e_ok else '未启动'}")
+        if not (b_ok and e_ok):
+            print(
+                "💡 闲聊/调度对话不依赖本地端口；仅当触发 B 站/Etsy RPA 时才需要双 MCP + 隧道。\n"
+                "   调度树走 MCP（:8002/:8003），**不需要** local_node/server.py :8001。"
+            )
     else:
-        print(f"✅ 本地 REST 节点 :{REST_NODE_PORT} 已就绪")
-    sock.close()
+        b_ok = _port_open(8002)
+        e_ok = _port_open(8003)
+        print(f"{'✅' if b_ok else '⚠️'} Bilibili MCP :8002 {'就绪' if b_ok else '未启动'}")
+        print(f"{'✅' if e_ok else '⚠️'} Etsy MCP :8003 {'就绪' if e_ok else '未启动'}")
 
     print(f"🌐 Widget:      http://0.0.0.0:{WIDGET_PORT}/")
-    print(f"☁️  Agent Engine: {AGENT_RESOURCE_NAME}")
+    if WIDGET_RUN_MODE == "cloud":
+        print(f"☁️  Mode: cloud | Agent Engine: {AGENT_RESOURCE_NAME}")
+    else:
+        print("🏠 Mode: local | in-process smart_agents runner")
     if _VERTEX_PROXY:
         print(f"🔐 Vertex 代理: {_VERTEX_PROXY}")
-    print("💡 云端 Agent 还需 ngrok http 8001 + .env NGROK_URL（与 deploy 一致）")
+    if WIDGET_RUN_MODE == "cloud":
+        print("💡 cloud 模式还需 Cloudflare Tunnel + .env 中 smart_agents 的公网 MCP URL")
+    else:
+        print("💡 local 模式无需部署 Agent Engine；确保本地双 MCP 已启动")
 
 
 if __name__ == "__main__":

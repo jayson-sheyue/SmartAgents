@@ -11,11 +11,15 @@ venv/
 
 # Secrets & local state
 .env
+.env.*
+!**/.env.example
+.smart_agents/.env
+smart_agents/.env
 bilibili_state.json
-agent_memory.json
-cloud_agent_memory.json
 
 # ADK deploy temp dirs
+bilibili_cloud_agent_tmp*/
+bilibili_cloud_agent_mcp_tmp*/
 cloud_agent_tmp*/
 cloud_agent_mcp_tmp*/
 

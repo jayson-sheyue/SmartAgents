@@ -7,8 +7,8 @@ P0 本地冒烟测试脚本（不经过大模型，直接调用 rpa_tools.py）
   像一份「自动检查清单」：按固定顺序调用 get_up_list / fetch / write，
   打印 JSON 结果，帮你确认 P0 工具契约（envelope、路径护栏）是否正常。
 
-【和 main.py 的区别】
-  - main.py：会启动 Gemini 大模型，由 AI 决定调什么工具（慢、不适合测契约）
+【用途】
+  直接调用 rpa_tools 的 P0 envelope，验证本地 RPA 契约（无 LLM、无 Agent）。
   - 本脚本：纯 Python 顺序调用，无 AI（快、适合测工具本身）
 
 【默认会测哪几步？（不加任何 -- 参数时）】

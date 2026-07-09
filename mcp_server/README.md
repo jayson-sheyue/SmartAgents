@@ -1,87 +1,92 @@
 # mcp_server — MCP 协议层
 
-将 [`main.py`](../main.py) 的 RPA 封装为 **Model Context Protocol (MCP) Server**，供 Cursor、云端 `cloud_agent_mcp`、GCP Agent Registry 使用。
+将本机 L1 工具封装为 **Model Context Protocol (MCP) Server**，供 Cursor、云端 `*_cloud_agent_mcp`、`smart_agents` 调度树使用。
 
 REST 等价能力在 [`../local_node/`](../local_node/)。
 
----
-
-## 文件说明
-
-| 文件 | 作用 |
-|------|------|
-| `bilibili_mcp.py` | MCP Server 主程序（stdio / HTTP） |
-| `run_sync.py` | 子进程跑 Playwright 同步 API（避免 asyncio 冲突） |
-| `toolspec.json` | GCP Agent Registry 注册用的 tool schema |
-| `test_local_client.py` | 本地 MCP 联调测试 |
+| 文件 | 端口 | 作用 |
+|------|------|------|
+| `bilibili_mcp.py` | **8002** | B 站 MCP（Agent Engine / 飞书 / Cursor） |
+| `etsy_mcp.py` | **8003** | Etsy MCP |
+| `tunnel_hosts.py` | — | 隧道 Host 白名单解析 |
 
 ---
 
-## 暴露的 Tools
+## B 站 MCP（`bilibili_mcp.py`）
 
-| MCP Tool | 参数 | → main.py |
-|----------|------|-----------|
+### 暴露的 Tools
+
+| MCP Tool | 参数 | → bilibili_tools |
+|----------|------|------------------|
 | `get_up_list` | 无 | `read_up_names_from_excel` |
 | `fetch_fans_data` | `up_name` | `get_up_fans_data`（经 run_sync 子进程） |
 | `write_excel` | `up_name`, `fans_count` | `write_fans_to_excel` |
 
----
-
-## 运行方式
-
-### 1. stdio（Cursor / Claude Desktop）
+### 运行
 
 ```bash
+# stdio（Cursor）
 python mcp_server/bilibili_mcp.py
-```
 
-由客户端通过管道 JSON-RPC 通信。项目已配置 [`.cursor/mcp.json`](../.cursor/mcp.json)。
-
-### 2. HTTP（云端 Agent + ngrok）
-
-```bash
+# HTTP（云端 / 调度树）
 python mcp_server/bilibili_mcp.py --http
-# 监听 0.0.0.0:8002，transport=streamable-http
-
-ngrok http 8002
+# → http://0.0.0.0:8002/mcp
 ```
 
-`.env` 配置：
-
-```env
-MCP_SERVER_URL=https://<域名>.ngrok-free.dev/mcp
-NGROK_HOST=<域名>.ngrok-free.dev
-```
-
-`NGROK_HOST` 用于 FastMCP DNS rebinding 白名单（否则云端请求 421）。
+环境变量：`BILIBILI_MCP_SERVER_URL`（Agent 侧）、`BILIBILI_TUNNEL_HOST`（Host 白名单，可选，也可从 URL 自动解析）。
 
 ---
 
-## GCP Agent Registry
+## Etsy MCP（`etsy_mcp.py`）
 
-控制台 **Build → MCP Servers** 注册的是 **Server 端点**，不是单个 Tool：
+### 暴露的 Tools
 
-| 字段 | 本项目示例 |
-|------|-----------|
-| MCP Server URL | `https://<ngrok>/mcp` |
+`etsy_check_credentials` · `etsy_fetch_listing_reviews` · `etsy_write_reviews_excel` · `etsy_fetch_and_export_reviews`
+
+### 运行
+
+```bash
+python mcp_server/etsy_mcp.py --http
+# → http://0.0.0.0:8003/mcp
+```
+
+环境变量：`ETSY_MCP_SERVER_URL`（Agent 侧）、`ETSY_TUNNEL_HOST`（Host 白名单，可选）。
+
+---
+
+## 共用文件
+
+| 文件 | 作用 |
+|------|------|
+| `run_sync.py` | Playwright 同步子进程（B 站） |
+| `toolspec.json` | GCP Agent Registry（B 站 MCP） |
+| `test_local_client.py` | B 站 stdio 联调 |
+| `tunnel_hosts.py` | 从隧道 URL 解析 MCP Host 白名单 |
+
+---
+
+## GCP Agent Registry（B 站 MCP）
+
+| 字段 | 示例 |
+|------|------|
+| MCP Server URL | `https://<uuid>.trycloudflare.com/mcp` |
 | toolspec | `mcp_server/toolspec.json` |
-| Server ID | `MCP_SERVER_REGISTRY_ID`（见 `.env`） |
 
-运行时 `McpToolset` 连 URL 后 **动态 `tools/list`**，无需在控制台逐条登记 tool。
+`McpToolset` 连 URL 后动态 `tools/list`。
 
 ---
 
 ## 与云端 Agent 的关系
 
 ```
-Playground / cloud_agent_mcp
+Playground / *_cloud_agent_mcp / smart_agents
     → McpToolset(StreamableHTTPConnectionParams)
-    → ngrok :8002
-    → bilibili_mcp.py
-    → main.py
+    → Cloudflare Tunnel 或 127.0.0.1
+    → bilibili_mcp.py :8002  或  etsy_mcp.py :8003
+    → bilibili_tools / etsy_tools
 ```
 
-Skill 编排见 [`../cloud_agent_mcp/README.md`](../cloud_agent_mcp/README.md)。
+调度树须**同时**启动 :8002 与 :8003。公网暴露见 [`../scripts/start_cloudflare_tunnel.sh`](../scripts/start_cloudflare_tunnel.sh)。
 
 ---
 
@@ -89,13 +94,15 @@ Skill 编排见 [`../cloud_agent_mcp/README.md`](../cloud_agent_mcp/README.md)�
 
 | 需求 | 步骤 |
 |------|------|
-| 新 tool | `bilibili_mcp.py` 加 `@mcp.tool()` → 更新 `toolspec.json` → 更新 Skill `adk_additional_tools` |
-| 新参数 | 改 tool 签名 + `main.py` → 同步 toolspec + SKILL.md |
-| ngrok 换域名 | 改 `.env` + GCP MCP Server URL + 重启 `--http` |
+| 新 B 站 tool | `bilibili_mcp.py` → `bilibili_tools.py` → toolspec + SKILL |
+| 新 Etsy tool | `etsy_mcp.py` → `etsy_tools.py` → Skill |
+| 隧道换域名 | 更新 `.env` + GCP Registry URL + 重启 `--http` |
 
 ---
 
 ## 相关文档
 
-- [`../user_guide.md`](../user_guide.md) 场景二、五、七
-- [`../feat.md`](../feat.md) MCP 双轨说明
+- [`../user_guide.md`](../user_guide.md) §2.3、§3.3、§4、§6、§9
+- [`../bilibili_cloud_agent_mcp/README.md`](../bilibili_cloud_agent_mcp/README.md)
+- [`../etsy_cloud_agent_mcp/README.md`](../etsy_cloud_agent_mcp/README.md)
+- [`.cursor/README.md`](../.cursor/README.md)
