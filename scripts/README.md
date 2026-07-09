@@ -2,13 +2,14 @@
 
 所有脚本默认在 **仓库根目录** 执行：`./scripts/<name>.sh`
 
-**全场景命令矩阵**：[`../user_guide.md`](../user_guide.md) §1
+**全场景命令矩阵**：[`../user_guide.md`](../user_guide.md) §1 · **开发者前置条件**：[`../user_guide.md` §0](../user_guide.md#0-开发者本地部署前置条件总览)
 
-通用前置：
+通用前置（详见 user_guide §0）：
 
 ```bash
 source .venvAgents/bin/activate
-cp .env.example .env   # 首次
+cp .env.example .env   # 首次；按 §0 填写 GCP / Etsy / 飞书等
+# 云端 Playground：另需 brew install cloudflared && ./scripts/start_cloudflare_tunnel.sh <port>
 ```
 
 ---

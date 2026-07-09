@@ -1,78 +1,240 @@
 # SmartAgents 操作手册
 
 > 全场景「照着做就能跑」清单 + 命令矩阵。  
+> **新开发者请先读 [§0 前置条件](#0-开发者本地部署前置条件总览)**（依赖安装、GCP、Etsy 凭证、cloudflared、飞书）。  
 > 架构总览：[`README.md`](README.md) · 脚本索引：[`scripts/README.md`](scripts/README.md) · ADK 概念：[`docs/adk_learning_guide.md`](docs/adk_learning_guide.md)
 
 ---
 
-## 0) 全局一次性准备（只做一次）
+## 0) 开发者本地部署：前置条件总览
 
-- [ ] 创建并激活虚拟环境
+> **读完本节再选 [§1](#1-场景速查先选你要跑哪条)**。不同场景所需条件不同；下表标「按需」的项可跳过。
+
+### 0.1 按场景需要装什么？（速查）
+
+| 条件 | 几乎所有 Agent 场景 | 仅 B 站 | 仅 Etsy | 仅本地 `127.0.0.1` | 云端 Playground / Widget·飞书 **cloud** | 飞书入口 | RAG |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| §0.2 Python + `requirements.txt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| §0.3 GCP + `gcloud` ADC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅（cloud） | ✅ |
+| §0.4 B 站登录 + Excel | — | ✅ | — | 视场景 | B 站任务时 | B 站任务时 | — |
+| §0.5 Etsy 开发者凭证 | — | — | ✅ | 视场景 | Etsy 任务时 | Etsy 任务时 | — |
+| §0.6 `cloudflared` 隧道 | — | — | — | ❌ 不需要 | ✅ | cloud 时需要 | — |
+| §0.7 飞书应用凭证 | — | — | — | — | — | ✅ | — |
+| §0.8 `adk deploy` + Engine ID | — | — | — | ❌ | ✅ | cloud 时需要 | ✅ |
+
+**本地纯调试**（`adk run`、Widget local、飞书 local）：**不需要** cloudflared，MCP/REST 用 `http://127.0.0.1` 即可。  
+**云端 Agent Engine 调本机 RPA**：必须 **双 MCP 常开 + 双隧道 + deploy**（见 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)）。
+
+---
+
+### 0.2 本机环境与 Python 依赖（必做）
+
+**系统建议**：macOS / Linux；Windows 未完整验证（Playwright RPA 可能需额外配置）。
+
+**需预先安装**：
+
+| 工具 | 用途 | 安装示例 |
+|------|------|----------|
+| **Python 3.10+** | 运行 Agent、MCP、Bridge | 系统自带或 `brew install python@3.11` |
+| **Git** | 克隆仓库 | 系统自带 / `brew install git` |
+| **Google Cloud SDK**（`gcloud`） | ADC 登录、deploy | [安装文档](https://cloud.google.com/sdk/docs/install) |
+| **ADK CLI**（`adk` 命令） | `adk run` / `adk deploy` | 随 `pip install -r requirements.txt` 安装 `google-adk` |
+
+**项目依赖（仓库根目录）**：
+
 ```bash
 cd /path/to/SmartAgents
 python3 -m venv .venvAgents
-source .venvAgents/bin/activate
+source .venvAgents/bin/activate          # Windows: .venvAgents\Scripts\activate
+
 pip install -r requirements.txt
-playwright install chromium
+playwright install chromium               # B 站 RPA 必需；仅跑 Etsy 可先跳过
 ```
 
-- [ ] 配置环境变量
+验证：
+
+```bash
+python -c "import google.adk; print('adk ok')"
+adk --help                                # 应能看到 run / deploy 子命令
+```
+
+**飞书 Bridge 额外依赖**（跑 `./scripts/run_feishu_smart_agents.sh` 时；脚本会自动 `pip install`，也可手动）：
+
+```bash
+pip install -r integrations/feishu/requirements.txt
+```
+
+**可选（国内访问 Vertex AI）**：在 `.env` 设置 `VERTEX_HTTP_PROXY=http://127.0.0.1:7890`（或你的代理端口）。
+
+---
+
+### 0.3 Google Cloud（跑 LLM / deploy 必做）
+
+所有 `adk run` / `adk deploy` 路径都会调用 **Vertex AI（Gemini）**，需要：
+
+1. 有可用的 **GCP 项目**（已开通计费）
+2. 启用 **Vertex AI API**
+3. 本机 ADC 登录：
+
 ```bash
 cp .env.example .env
-```
+# 编辑 .env：
+#   GCP_PROJECT_ID=your-gcp-project-id
+#   GCP_PROJECT_NUMBER=000000000000    # 控制台 Home → 项目编号
+#   GCP_LOCATION=us-central1
 
-- [ ] 按运行模式填写 `.env`（本地/云端二选一）
-```env
-# 通用
-WIDGET_RUN_MODE=local   # 或 cloud
-FEISHU_RUN_MODE=local   # 或 cloud
-SMART_AGENTS_ENGINE_ID= # cloud 模式必填（调度树 / Widget cloud / 飞书 cloud）
-
-# AGENT_RESOURCE_NAME=projects/<project-number>/locations/us-central1/reasoningEngines/<engine-id>
-# （Widget/飞书 cloud 可显式指定；不填则按 SMART_AGENTS_ENGINE_ID 自动拼接）
-
-# 本地模式（推荐先跑通）
-BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001
-BILIBILI_MCP_SERVER_URL=http://127.0.0.1:8002/mcp
-ETSY_REST_SERVER_URL=http://127.0.0.1:8001
-ETSY_MCP_SERVER_URL=http://127.0.0.1:8003/mcp
-BILIBILI_TUNNEL_HOST=
-ETSY_TUNNEL_HOST=
-
-# 云端 Playground（Cloudflare Quick Tunnel，域名每次重启会变）
-# BILIBILI_MCP_SERVER_URL=https://<bilibili-uuid>.trycloudflare.com/mcp
-# ETSY_MCP_SERVER_URL=https://<etsy-uuid>.trycloudflare.com/mcp
-# BILIBILI_TUNNEL_HOST=<bilibili-uuid>.trycloudflare.com
-# ETSY_TUNNEL_HOST=<etsy-uuid>.trycloudflare.com
-
-# 小智知识库 RAG（可选，见 §10）
-# RAG_ENABLED=true
-# RAG_CORPUS_NAME=projects/<project>/locations/<loc>/ragCorpora/<id>
-# RAG_LOCATION=asia-east1
-```
-
-- [ ] 完成 GCP ADC 登录
-```bash
 gcloud auth application-default login
 gcloud config set project $GCP_PROJECT_ID
 ```
 
-- [ ] B 站首次登录（仅 B 站相关场景需要）
+**仅本地 `adk run`**：填好上述三项即可，**不必**先 deploy。  
+**云端 Playground / Widget·飞书 cloud**：还需 `SMART_AGENTS_ENGINE_ID`（或各单领域 `*_AGENT_ENGINE_ID`），通过 [§6](#6-云端部署清单可选) `adk deploy` 获得。
+
+---
+
+### 0.4 B 站 RPA（按需）
+
+涉及 B 站粉丝抓取、Excel 读写时需：
+
+| 项 | 说明 |
+|----|------|
+| Playwright Chromium | `playwright install chromium`（见 §0.2） |
+| B 站登录态 | `python -m bilibili_agent login` → 生成根目录 `bilibili_state.json`（已在 `.gitignore`） |
+| UP 主名单 Excel | 默认 `~/Desktop/Up主名称.xlsx`（首列或指定列为 UP 主名） |
+
+自检（无大模型）：
+
 ```bash
-python -m bilibili_agent login
+python scripts/test_p0_local.py
 ```
 
-- [ ] Etsy 凭证写入 `.env`（仅 Etsy 相关场景需要）
+---
+
+### 0.5 Etsy Open API 凭证（按需）
+
+涉及 Etsy 评论拉取、导出 Excel 时需在本机 `.env` 配置（**不上云**）：
+
 ```env
-ETSY_KEYSTRING=...
-ETSY_SHARED_SECRET=...
+ETSY_KEYSTRING=your-keystring
+ETSY_SHARED_SECRET=your-shared-secret
+# 或合并写法：ETSY_API_KEY=keystring:shared_secret
+```
+
+#### 如何获取（Etsy 开发者平台）
+
+1. 打开 [Etsy Developers — Your Apps](https://www.etsy.com/developers/your-apps) 并登录 Etsy 账号。  
+2. **Create a new app**（若尚无应用）：填写应用名称、描述；类型选适合 **个人/脚本调用 Open API v3** 的用途（按页面提示填写）。  
+3. 创建后在应用详情页找到：  
+   - **Keystring**（即 `ETSY_KEYSTRING`）  
+   - **Shared secret**（即 `ETSY_SHARED_SECRET`）  
+4. 写入仓库根 `.env`（勿提交 Git）。  
+5. 验证：
+
+```bash
+python scripts/test_etsy_local.py --check-credentials --verify-api
+```
+
+**说明**：Etsy API 有速率与权限限制；`listing_id` 须为你有权访问的店铺商品。测试可用：
+
+```bash
+python scripts/test_etsy_local.py --listing-id <数字ID> --live-fetch
+```
+
+---
+
+### 0.6 Cloudflare Quick Tunnel（仅云端调本机 MCP/REST）
+
+**何时需要**：Agent Engine Playground、Widget **cloud**、飞书 **cloud** —— 云端要能 HTTPS 访问你本机的 `:8002` / `:8003`（调度树）或 `:8001`（单领域 REST）。
+
+**何时不需要**：纯本地 `adk run`、Widget **local**、飞书 **local**、MCP URL 填 `http://127.0.0.1:*`。
+
+**安装 cloudflared**（macOS 示例）：
+
+```bash
+brew install cloudflare/cloudflare/cloudflared
+cloudflared --version
+```
+
+**启动隧道**（每个端口 **单独一个终端**，脚本会转发到本机）：
+
+```bash
+# B 站 MCP（:8002）
+./scripts/start_cloudflare_tunnel.sh 8002
+
+# Etsy MCP（:8003）— 调度树云端需要第二个终端
+./scripts/start_cloudflare_tunnel.sh 8003
+
+# 单领域 REST 云端（:8001）— 仅 bilibili_cloud_agent / etsy_cloud_agent
+./scripts/start_cloudflare_tunnel.sh 8001
+```
+
+终端会打印 `https://<uuid>.trycloudflare.com`。**Quick Tunnel 域名每次重启会变**，需更新 `.env` 后 **再启动 MCP**（使 `*_TUNNEL_HOST` 白名单生效），然后 redeploy。完整顺序见 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)。
+
+写入 `.env` 示例（调度树双 MCP）：
+
+```env
+BILIBILI_MCP_SERVER_URL=https://<bilibili-uuid>.trycloudflare.com/mcp
+ETSY_MCP_SERVER_URL=https://<etsy-uuid>.trycloudflare.com/mcp
+BILIBILI_TUNNEL_HOST=<bilibili-uuid>.trycloudflare.com
+ETSY_TUNNEL_HOST=<etsy-uuid>.trycloudflare.com
+```
+
+**注意**：隧道进程须 **常开**；本机 MCP 也须常开。Clash/VPN 的 fake-ip 可能导致隧道 SSL 异常，排错见 [§7](#7-高频故障快速排查)。
+
+---
+
+### 0.7 飞书开放平台（仅飞书入口）
+
+1. [飞书开放平台](https://open.feishu.cn/) 创建企业自建应用，开启 **机器人** 能力。  
+2. 在「凭证与基础信息」复制 **App ID**、**App Secret** 到 `.env`：
+
+```env
+FEISHU_RUN_MODE=local          # 或 cloud
+FEISHU_APP_ID=cli_xxxxxxxxxx
+FEISHU_APP_SECRET=your-app-secret
+```
+
+3. **事件订阅**：`im.message.receive_v1`，接收方式选 **使用长连接接收事件**（须 **先启动** `./scripts/run_feishu_smart_agents.sh` 再在后台保存）。  
+4. **cloud 模式**另需：`SMART_AGENTS_ENGINE_ID` + [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 隧道与 deploy。  
+5. 可选护栏：`FEISHU_OWNER_OPEN_ID`、`FEISHU_OWNER_ALIASES`（见 [§5.4](#54-防提示词注入主人忠诚模式)）。
+
+详见 [`integrations/feishu/README.md`](integrations/feishu/README.md)。
+
+---
+
+### 0.8 配置 `.env` 并做一次最小自检
+
+```bash
+cp .env.example .env
+# 至少填写：GCP_PROJECT_ID、GCP_PROJECT_NUMBER、GCP_LOCATION
+# 按场景追加：ETSY_*、FEISHU_*、SMART_AGENTS_ENGINE_ID、隧道 URL 等
+```
+
+**本地模式 URL 模板**（无需隧道）：
+
+```env
+WIDGET_RUN_MODE=local
+FEISHU_RUN_MODE=local
+BILIBILI_MCP_SERVER_URL=http://127.0.0.1:8002/mcp
+ETSY_MCP_SERVER_URL=http://127.0.0.1:8003/mcp
+BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001
+ETSY_REST_SERVER_URL=http://127.0.0.1:8001
+```
+
+**最小自检路径**（确认依赖与凭证，仍不必 deploy）：
+
+```bash
+source .venvAgents/bin/activate
+gcloud auth application-default print-access-token | head -c 20   # 有输出即可
+python scripts/test_p0_local.py                                  # B 站工具（可选）
+python scripts/test_etsy_local.py --check-credentials --verify-api  # Etsy（可选）
 ```
 
 ---
 
 ## 1) 场景速查（先选你要跑哪条）
 
-> **怎么用这张表**：先完成 [§0](#0-全局一次性准备只做一次)；在下表找到目标行，按「本地终端」列开终端。**云端调度树**统一走 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)（先隧道拿域名 → 写 `.env` → 启 MCP → deploy → 入口）。
+> **怎么用这张表**：先完成 [§0](#0-开发者本地部署前置条件总览)；在下表找到目标行，按「本地终端」列开终端。**云端调度树**统一走 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)（先隧道拿域名 → 写 `.env` → 启 MCP → deploy → 入口）。
 
 ### 单领域（只跑 B 站或 Etsy 其中一个 Agent）
 
@@ -440,13 +602,16 @@ lsof -i :8001 && lsof -i :8002 && lsof -i :8003
 
 ## 8) 建议新手的最短路径
 
-1. B 站进程内：`./scripts/run_adk_bilibili_agent.sh`
-2. Etsy 进程内：`./scripts/run_adk_etsy_agent.sh`
-3. 调度树本地：双 MCP + `./scripts/run_adk_smart_agents.sh`
-4. Widget 本地：`widget_server.py` + 浏览器 `:8000`
-5. 飞书 local：`./scripts/run_feishu_smart_agents.sh`
-6. 云端：按 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)（隧道 → `.env` → MCP → deploy）+ Playground
-7. （可选）RAG：见 [§10](#10-知识库-rag-poc)，先起 corpus 再 redeploy
+> 每一步的依赖与凭证见 [§0](#0-开发者本地部署前置条件总览)。
+
+1. 完成 §0.2–§0.3（venv、`requirements.txt`、`gcloud` ADC）
+2. B 站进程内：`python -m bilibili_agent login` → `./scripts/run_adk_bilibili_agent.sh`
+3. Etsy 进程内：§0.5 凭证 → `./scripts/run_adk_etsy_agent.sh`
+4. 调度树本地：双 MCP + `./scripts/run_adk_smart_agents.sh`（**无需** cloudflared）
+5. Widget 本地：`widget_server.py` + 浏览器 `:8000`
+6. 飞书 local：§0.7 + 双 MCP → `./scripts/run_feishu_smart_agents.sh`
+7. 云端：§0.6 隧道 + [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) deploy + Playground
+8. （可选）RAG：见 [§10](#10-知识库-rag-poc)，先起 corpus 再 redeploy
 
 ---
 

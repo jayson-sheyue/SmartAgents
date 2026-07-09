@@ -64,7 +64,7 @@ python scripts/test_etsy_local.py --listing-id 786582119 --live-fetch
 
 ## 凭证
 
-本机 `.env`：`ETSY_KEYSTRING` + `ETSY_SHARED_SECRET`。REST/MCP 路径下由 `local_node` / `etsy_mcp` 读取，不经 Agent 上云。
+本机 `.env`：`ETSY_KEYSTRING` + `ETSY_SHARED_SECRET`（申请步骤见 [`../user_guide.md` §0.5](../user_guide.md#05-etsy-open-api-凭证按需)）。REST/MCP 路径下由 `local_node` / `etsy_mcp` 读取，不经 Agent 上云。
 
 ## 相关文档
 

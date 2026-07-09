@@ -68,7 +68,7 @@
 |--------|------|
 | **总览与选路** | 本文 |
 | **一键脚本说明** | [`scripts/README.md`](scripts/README.md) |
-| **全场景操作手册** | [`user_guide.md`](user_guide.md)（§1 速查 · §2–3 单域 · §4 调度树 · §5 飞书 · §6 部署 · §10 RAG） |
+| **全场景操作手册** | [`user_guide.md`](user_guide.md)（**§0 开发者前置条件** · §1 速查 · §2–3 单域 · §4 调度树 · §5 飞书 · §6 部署 · §10 RAG） |
 | **ADK 学习与官方链接** | [`docs/adk_learning_guide.md`](docs/adk_learning_guide.md) |
 | 本地测 B 站 RPA（无 Agent） | [`scripts/test_p0_local.py`](scripts/test_p0_local.py) |
 | Cursor MCP（stdio） | [`.cursor/README.md`](.cursor/README.md) · [`mcp_server/README.md`](mcp_server/README.md) |
@@ -147,16 +147,27 @@ SmartAgents/
 
 ---
 
-## 环境准备（最短路径）
+## 环境准备
+
+**完整前置条件**（按场景需要装什么、Etsy 凭证怎么申请、`cloudflared` 何时要跑）：[`user_guide.md` §0](user_guide.md#0-开发者本地部署前置条件总览)。
+
+**最短命令**（§0.2 + §0.3 已满足后）：
 
 ```bash
 python3 -m venv .venvAgents && source .venvAgents/bin/activate
 pip install -r requirements.txt
-playwright install chromium
-cp .env.example .env   # 填入 GCP、凭证、Engine ID 等
+playwright install chromium          # B 站 RPA 需要
+cp .env.example .env                 # 填入 GCP、Etsy、飞书等（见 user_guide §0）
 gcloud auth application-default login
-python -m bilibili_agent login   # B 站登录态 → bilibili_state.json
+python -m bilibili_agent login       # 仅 B 站场景
 ```
+
+| 你还想跑… | 额外准备 |
+|-----------|----------|
+| Etsy 评论 | [Etsy Developers](https://www.etsy.com/developers/your-apps) 申请 Keystring + Shared secret → `.env`；`python scripts/test_etsy_local.py --check-credentials --verify-api` |
+| 调度树 / 飞书 / Widget（**本地**） | 双 MCP `:8002` + `:8003`，**无需**隧道 |
+| Playground / Widget·飞书 **cloud** | 安装 `cloudflared` → `./scripts/start_cloudflare_tunnel.sh 8002`（及 8003）→ deploy |
+| 飞书群聊 | 飞书开放平台应用 + `pip install -r integrations/feishu/requirements.txt` |
 
 新手推荐路径见 [`user_guide.md` §8](user_guide.md#8-建议新手的最短路径)。
 
