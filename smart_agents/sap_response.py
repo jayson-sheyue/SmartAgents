@@ -10,7 +10,7 @@ from google.genai import types
 from smart_agents.artifact_callbacks import _load_image_data_uris, mark_image_artifacts_delivered
 from smart_agents.sap_recovery import sap_recovery_text
 
-SAP_QUERY_TOOLS = frozenset({"sap_query_purchase_order", "sap_query_from_invoice", "sap_query_recognized_invoice"})
+SAP_QUERY_TOOLS = frozenset({"sap_query_purchase_order", "sap_query_from_invoice", "sap_query_recognized_invoice", "browser_demo_compare_laptops"})
 
 
 def _cell(value) -> str:
@@ -59,7 +59,11 @@ async def sap_result_before_model_callback(callback_context, llm_request):
     result = responses[0].response
     if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
         return None
-    text = format_sap_result(result)
+    if responses[0].name == 'browser_demo_compare_laptops':
+        from smart_agents.browser_demo_tools import format_browser_demo_result
+        text = format_browser_demo_result(result, _cell)
+    else:
+        text = format_sap_result(result)
     artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), list) else []
     # The tool only produces one screenshot; keep this callback bounded even if malformed.
     entries = [entry for entry in artifacts[:4] if isinstance(entry, dict) and entry.get("filename")]

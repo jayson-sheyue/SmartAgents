@@ -153,3 +153,20 @@ Worker 使用稳定的服务 URL，重新部署通常不改变地址；旧本机
 本次自动测试使用真实无头 Chromium 与模拟 SAP 页面、模拟模型，不证明实际云端 SAP 登录或 Gemini 调用已经通过。
 云端容器构建、IAM、SAP 的实际 SSO 与查询须部署后验证。
 扩展到多实例或大规模用户需要会话路由、分布式协调和任务队列，不能直接调高 max-instances。
+
+### 排除 SAP 登录因素的静态页面检查
+
+`scripts/check_static_computer_use.py` 使用真实 Gemini Computer Use 和无头 Chromium，
+复用生产 Golden Path 的三步操作：模型看截图选择输入框、输入固定测试单号、点击 Go。
+固定 HTML 由浏览器路由在内存中提供，不访问 SAP，也不读取任何用户的登录资料。
+测试页明确标记虚构数据；最终通过页面结果验证操作效果，并保存 PNG 与模型动作记录。
+
+```bash
+GCP_PROJECT_ID=YOUR_PROJECT .venvAgents/bin/python -m scripts.check_static_computer_use \
+  --output /tmp/static-computer-use-check
+```
+
+本机运行需要有效的 Google ADC 和模型调用权限。要验证云端环境，应在使用相同浏览器镜像、
+执行账号和模型配置的独立临时 Cloud Run 服务运行 `--serve`，通过 IAM 调用 `POST /run`。
+该模式只供管理员临时检查，必须保持服务私有；完成后删除临时服务。
+此检查证明截图到模型动作再到浏览器执行的链路，不证明 SAP SSO 或 TSE 对话链路已通过。

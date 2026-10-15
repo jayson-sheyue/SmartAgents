@@ -113,6 +113,21 @@ def create_app(worker: SapBrowserWorker, token: str, *, allowed_users: set[str] 
         return Response(await session.page.screenshot(animations="disabled"), media_type="image/png")
 
     if cloud:
+        demo_lock = asyncio.Lock()
+
+        @app.post('/demo/demoblaze', dependencies=[Depends(authenticate), Depends(authorize_user)])
+        async def demoblaze_demo(request: Request):
+            if demo_lock.locked():
+                return local_result(failure('WEB_DEMO_BUSY', '当前已有网页演示在运行，请稍后再试。'))
+            from domains.sap.web_demo import run_demoblaze_demo
+            async with demo_lock:
+                try:
+                    return local_result(await asyncio.wait_for(run_demoblaze_demo(
+                        client=worker.client, model=worker.model), 180))
+                except Exception as exc:
+                    logger.error('Web demo failed type=%s', type(exc).__name__)
+                    return local_result(failure('WEB_DEMO_FAILED', '公开网页演示未完成或已超时，请稍后再试。'))
+
         @app.post('/login/snapshot', dependencies=[Depends(authenticate), Depends(authorize_user)])
         async def login_snapshot(request: Request):
             try:
