@@ -13,7 +13,7 @@ from typing import Callable, Optional
 import google.auth
 import google.auth.transport.requests
 import requests
-from google.adk.artifacts.in_memory_artifact_service import InMemoryArtifactService
+from google.adk.artifacts.base_artifact_service import BaseArtifactService
 from google.adk.auth.credential_service.in_memory_credential_service import (
     InMemoryCredentialService,
 )
@@ -27,10 +27,12 @@ from google.adk.sessions.session import Session
 from google.adk.utils.context_utils import Aclosing
 from google.genai import types
 
+from integrations.feishu.ask_result import AskResult, DeliveredArtifact
 from integrations.feishu.config import FeishuBridgeConfig, apply_agent_env
 from integrations.feishu.cloud_session_store import CloudSessionStore
 from integrations.feishu.progress import format_from_adk_event, format_from_stream_event
 from smart_agents.app_factory import build_smart_agents_app
+from smart_agents.artifact_runtime import create_smart_agents_artifact_service
 from smart_agents.memory_ingest import flush_session_to_memory_bank
 
 ProgressCallback = Callable[[str], None]
@@ -48,6 +50,7 @@ class SmartAgentsClient:
         self._cfg = cfg
         self._runner: Optional[Runner] = None
         self._session_service: Optional[BaseSessionService] = None
+        self._artifact_service: Optional[BaseArtifactService] = None
         self._init_lock = asyncio.Lock()
         self._gcp_session = requests.Session()
         self._gcp_session.trust_env = False
@@ -276,10 +279,13 @@ class SmartAgentsClient:
                 logger.warning("SQLite session 不可用，回退内存: %s", exc)
                 self._session_service = InMemorySessionService()
 
+            self._artifact_service = create_smart_agents_artifact_service()
+            logger.info("Artifact 持久化: smart_agents/.adk/artifacts/")
+
             self._runner = Runner(
                 app=app,
                 session_service=self._session_service,
-                artifact_service=InMemoryArtifactService(),
+                artifact_service=self._artifact_service,
                 memory_service=InMemoryMemoryService(),
                 credential_service=InMemoryCredentialService(),
             )
@@ -307,27 +313,123 @@ class SmartAgentsClient:
             logger.info("新建 ADK session user=%s session=%s", user_id, session_id)
         return session, runner
 
-    async def ask(
+    async def _load_round_artifacts(
         self,
         *,
+        app_name: str,
         user_id: str,
         session_id: str,
-        text: str,
-        on_progress: Optional[ProgressCallback] = None,
-    ) -> str:
-        if self._cfg.run_mode == "cloud":
-            return await asyncio.to_thread(
-                self._ask_cloud_sync,
+        artifact_delta: dict[str, int],
+    ) -> list[DeliveredArtifact]:
+        if not artifact_delta or self._artifact_service is None:
+            return []
+
+        loaded: list[DeliveredArtifact] = []
+        for filename, version in artifact_delta.items():
+            part = await self._artifact_service.load_artifact(
+                app_name=app_name,
                 user_id=user_id,
                 session_id=session_id,
-                text=text,
-                on_progress=on_progress,
+                filename=filename,
+                version=version,
             )
+            if part is None:
+                continue
+            data = b""
+            mime = "application/octet-stream"
+            if part.inline_data and part.inline_data.data:
+                data = part.inline_data.data
+                mime = part.inline_data.mime_type or mime
+            elif part.text:
+                data = part.text.encode("utf-8")
+                mime = "text/plain"
+            if not data:
+                continue
+            loaded.append(
+                DeliveredArtifact(
+                    filename=filename,
+                    mime_type=mime,
+                    data=data,
+                    version=version,
+                )
+            )
+        return loaded
 
-        """发送用户消息，取本轮最终 Agent 的文本回复（避免调度器+专家双份拼接）。"""
-        session, runner = await self._ensure_session(user_id, session_id)
+    @staticmethod
+    def _is_context_overflow_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "input token count" in msg
+            and "exceeds the maximum number of tokens allowed" in msg
+        )
+
+    @staticmethod
+    def _estimate_session_chars(session: Session) -> int:
+        total = 0
+        for event in session.events or []:
+            content = event.content
+            if not content or not content.parts:
+                continue
+            for part in content.parts:
+                text = getattr(part, "text", None)
+                if text:
+                    total += len(text)
+        return total
+
+    async def _rotate_local_session(
+        self, *, user_id: str, session_id: str, reason: str
+    ) -> Session:
+        assert self._session_service is not None
+        await self._session_service.delete_session(
+            app_name=self._cfg.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        session = await self._session_service.create_session(
+            app_name=self._cfg.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        logger.warning(
+            "本地会话已轮转 user=%s session=%s reason=%s",
+            user_id,
+            session_id,
+            reason,
+        )
+        return session
+
+    async def _guard_local_session_size(
+        self, *, user_id: str, session_id: str, session: Session
+    ) -> tuple[Session, bool]:
+        if not self._cfg.local_session_guard_enabled:
+            return session, False
+        events = len(session.events or [])
+        chars = self._estimate_session_chars(session)
+        if (
+            events <= self._cfg.local_session_max_events
+            and chars <= self._cfg.local_session_max_chars
+        ):
+            return session, False
+        reason = (
+            f"events={events}/{self._cfg.local_session_max_events}, "
+            f"chars={chars}/{self._cfg.local_session_max_chars}"
+        )
+        rotated = await self._rotate_local_session(
+            user_id=user_id, session_id=session_id, reason=reason
+        )
+        return rotated, True
+
+    async def _run_local_round(
+        self,
+        *,
+        runner: Runner,
+        session: Session,
+        text: str,
+        on_progress: Optional[ProgressCallback],
+    ) -> tuple[dict[str, list[str]], Optional[str], dict[str, int]]:
         by_author: dict[str, list[str]] = {}
         last_author: Optional[str] = None
+        artifact_delta: dict[str, int] = {}
 
         content = types.Content(role="user", parts=[types.Part(text=text)])
         async with Aclosing(
@@ -342,6 +444,8 @@ class SmartAgentsClient:
                     progress = format_from_adk_event(event)
                     if progress:
                         on_progress(progress)
+                if event.actions and event.actions.artifact_delta:
+                    artifact_delta.update(event.actions.artifact_delta)
                 if not event.content or not event.content.parts:
                     continue
                 texts = [p.text for p in event.content.parts if p.text]
@@ -350,6 +454,54 @@ class SmartAgentsClient:
                 author = event.author or "agent"
                 last_author = author
                 by_author.setdefault(author, []).extend(texts)
+        return by_author, last_author, artifact_delta
+
+    async def ask(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        text: str,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> AskResult:
+        if self._cfg.run_mode == "cloud":
+            reply = await asyncio.to_thread(
+                self._ask_cloud_sync,
+                user_id=user_id,
+                session_id=session_id,
+                text=text,
+                on_progress=on_progress,
+            )
+            return AskResult(text=reply)
+
+        """发送用户消息，取本轮最终 Agent 文本回复与新增 Artifact。"""
+        session, runner = await self._ensure_session(user_id, session_id)
+        session, pre_rotated = await self._guard_local_session_size(
+            user_id=user_id, session_id=session_id, session=session
+        )
+        retried_after_overflow = False
+        try:
+            by_author, last_author, artifact_delta = await self._run_local_round(
+                runner=runner,
+                session=session,
+                text=text,
+                on_progress=on_progress,
+            )
+        except Exception as exc:
+            if not self._is_context_overflow_error(exc):
+                raise
+            session = await self._rotate_local_session(
+                user_id=user_id,
+                session_id=session_id,
+                reason="token-overflow",
+            )
+            by_author, last_author, artifact_delta = await self._run_local_round(
+                runner=runner,
+                session=session,
+                text=text,
+                on_progress=on_progress,
+            )
+            retried_after_overflow = True
 
         reply = ""
         if last_author and last_author in by_author:
@@ -359,13 +511,31 @@ class SmartAgentsClient:
 
         if not reply:
             reply = "（任务已执行，暂无文字说明。）"
+        if pre_rotated:
+            reply = (
+                "（提示：为避免上下文过长，本会话已自动开始新轮次，长期记忆不受影响。）\n\n"
+                + reply
+            )
+        elif retried_after_overflow:
+            reply = (
+                "（提示：检测到上下文超长，已自动重置当前会话后重试。）\n\n"
+                + reply
+            )
+
+        artifacts = await self._load_round_artifacts(
+            app_name=self._cfg.app_name,
+            user_id=session.user_id,
+            session_id=session.id,
+            artifact_delta=artifact_delta,
+        )
         logger.info(
-            "Agent 回复完成 session=%s author=%s len=%d",
+            "Agent 回复完成 session=%s author=%s len=%d artifacts=%d",
             session_id,
             last_author,
             len(reply),
+            len(artifacts),
         )
-        return reply
+        return AskResult(text=reply, artifacts=artifacts)
 
     def _ask_cloud_sync(
         self,

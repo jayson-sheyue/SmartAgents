@@ -1,1 +1,2 @@
-# Etsy Agent 模块：etsy_tools（L1）+ agent.py（ADK Skill Agent）
+# -*- coding: utf-8 -*-
+"""Etsy MCP + Skill ADK package (local adk run + cloud deploy)."""

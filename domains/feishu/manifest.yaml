@@ -1,0 +1,55 @@
+domain: feishu
+agent_name: Feishu_Cloud_MCP_Agent
+standalone_name: Feishu_Agent
+description: "飞书专家小飞：日历/消息/文档/表格（Cloud Run MCP + lark-cli；个人资源需用户 OAuth）"
+
+skills:
+  - feishu-ops
+
+mcp_tools:
+  - feishu_cli_status
+  - feishu_oauth_status
+  - feishu_oauth_start
+  - feishu_oauth_complete
+  - feishu_app_scopes_remediate
+  - feishu_calendar_agenda
+  - feishu_calendar_create
+  - feishu_calendar_freebusy
+  - feishu_contact_search_user
+  - feishu_im_chat_search
+  - feishu_im_send_text
+  - feishu_im_chat_messages_list
+  - feishu_im_messages_search
+  - feishu_doc_search
+  - feishu_doc_fetch
+  - feishu_doc_create_markdown
+  - feishu_sheet_read
+  - feishu_sheet_write_csv
+  - feishu_bitable_create
+  - feishu_bitable_field_list
+  - feishu_bitable_table_list
+  - feishu_bitable_parse_url
+  - feishu_bitable_record_list
+  - feishu_bitable_enrich_tse_records
+  - feishu_bitable_write_tse_records
+  - feishu_bitable_record_batch_create
+  - feishu_bitable_record_batch_update
+  - feishu_bitable_record_upsert
+
+routing_keywords:
+  - 飞书
+  - feishu
+  - lark
+  - 日历
+  - 日程
+  - 约会议
+  - 发消息
+  - 群聊
+  - 通讯录
+  - 云文档
+  - 搜文档
+  - 电子表格
+  - 多维表格
+  - bitable
+  - 授权
+  - oauth

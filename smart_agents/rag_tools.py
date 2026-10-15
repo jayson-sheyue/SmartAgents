@@ -35,11 +35,25 @@ def rag_search(query: str, top_k: int = 5) -> dict[str, Any]:
     适用：知识库问答（PDF/手册/FAQ）、产品说明、内部文档问题。
     不适用：B 站/Etsy 实时 RPA、用户个人偏好（用 Memory）、时效新闻（用 google_search）。
     """
+    return _rag_retrieve(query=query, top_k=top_k, tool_name="rag_search")
+
+
+def search_tse_knowledge(query: str, top_k: int = 5) -> dict[str, Any]:
+    """
+    检索 TSE 知识投递入口写入的团队文档（GCS → Vertex RAG）。
+
+    用户在 TSE「技术知识库」上传的 PDF/链接经索引后，用本工具回答；
+    务必在回复中引用 ``sources`` / snippet 来源链接；无命中时明确说库中没有。
+    """
+    return _rag_retrieve(query=query, top_k=top_k, tool_name="search_tse_knowledge")
+
+
+def _rag_retrieve(*, query: str, top_k: int, tool_name: str) -> dict[str, Any]:
     corpus = (os.getenv("RAG_CORPUS_NAME") or "").strip()
     if not corpus:
         return {
             "ok": False,
-            "tool": "rag_search",
+            "tool": tool_name,
             "data": {"snippets": [], "sources": []},
             "error": {"code": "RAG_NOT_CONFIGURED", "message": "未设置 RAG_CORPUS_NAME"},
             "meta": {},
@@ -49,7 +63,7 @@ def rag_search(query: str, top_k: int = 5) -> dict[str, Any]:
     if not q:
         return {
             "ok": False,
-            "tool": "rag_search",
+            "tool": tool_name,
             "data": {"snippets": [], "sources": []},
             "error": {"code": "EMPTY_QUERY", "message": "query 不能为空"},
             "meta": {},
@@ -107,20 +121,27 @@ def rag_search(query: str, top_k: int = 5) -> dict[str, Any]:
 
         return {
             "ok": True,
-            "tool": "rag_search",
+            "tool": tool_name,
             "data": {
                 "snippets": snippets,
                 "sources": sources,
                 "count": len(snippets),
+                "grounded": len(snippets) > 0,
+                "empty": len(snippets) == 0,
+                "hint": (
+                    "用 snippets 作答并注明 sources；不要扩写库外内容。"
+                    if snippets
+                    else "RAG 未命中：按调度瀑布继续飞书文档/表格/群聊；全部未命中须如实告知，禁止装懂，禁止用 google_search 冒充内部方案。"
+                ),
             },
             "error": None,
             "meta": {"corpus": corpus, "location": location, "top_k": k},
         }
     except Exception as exc:
-        logger.exception("rag_search failed")
+        logger.exception("%s failed", tool_name)
         return {
             "ok": False,
-            "tool": "rag_search",
+            "tool": tool_name,
             "data": {"snippets": [], "sources": []},
             "error": {"code": "RAG_QUERY_FAILED", "message": str(exc)[:500]},
             "meta": {"corpus": corpus, "location": location},

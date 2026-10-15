@@ -38,6 +38,7 @@ if str(_ROOT) not in sys.path:
 
 from integrations.feishu.agent_client import ProgressCallback, SmartAgentsClient
 from integrations.feishu.config import FeishuBridgeConfig
+from integrations.feishu.media_delivery import deliver_artifacts
 from integrations.feishu.ssl_patch import apply_feishu_ssl_patch
 from integrations.feishu.message_utils import (
     build_identity_prompt,
@@ -288,7 +289,7 @@ class FeishuBridge:
                 progress = updater
 
             try:
-                reply = await self.agent.ask(
+                result = await self.agent.ask(
                     user_id=user_id,
                     session_id=session_id,
                     text=build_identity_prompt(
@@ -300,6 +301,7 @@ class FeishuBridge:
                     ),
                     on_progress=progress,
                 )
+                reply = result.text
             except Exception:
                 logger.exception("Agent 调用失败")
                 if status_message_id:
@@ -334,6 +336,12 @@ class FeishuBridge:
                 reply = "抱歉，我不会生成任何针对主人的攻击或贬损内容。"
 
             self._reply(message_id, reply)
+            if result.artifacts:
+                deliver_artifacts(
+                    self.api,
+                    message_id=message_id,
+                    artifacts=result.artifacts,
+                )
 
     def on_message(self, data: P2ImMessageReceiveV1) -> None:
         """同步回调：立即返回，后台跑 Agent。"""

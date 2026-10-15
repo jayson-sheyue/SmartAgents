@@ -2,13 +2,12 @@
 """
 rpa_tools.py — 兼容层（re-export）
 
-实现已迁至 `bilibili_agent/bilibili_tools.py`（与 Etsy `etsy_tools` 对称）。
-REST / MCP / 测试脚本可继续 `from rpa_tools import ...`。
+实现已迁至 `domains/bilibili/bilibili_tools.py`。
 """
 
 from __future__ import annotations
 
-from bilibili_agent.bilibili_tools import (
+from domains.bilibili.bilibili_tools import (
     ALLOWED_EXCEL_ROOTS,
     LOGIN_STATE_FILE,
     LOGIN_HINT,
@@ -19,7 +18,9 @@ from bilibili_agent.bilibili_tools import (
     parse_fans_count,
     read_up_names_from_excel,
     resolve_excel_path,
+    tool_export_hot_videos_excel,
     tool_fetch_fans_data,
+    tool_fetch_hot_videos,
     tool_get_up_list,
     tool_write_excel,
     write_fans_to_excel,
@@ -40,4 +41,6 @@ __all__ = [
     "tool_get_up_list",
     "tool_fetch_fans_data",
     "tool_write_excel",
+    "tool_fetch_hot_videos",
+    "tool_export_hot_videos_excel",
 ]

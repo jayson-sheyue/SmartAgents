@@ -1,0 +1,30 @@
+domain: etsy
+agent_name: Etsy_Cloud_MCP_Agent
+standalone_name: Etsy_Agent
+description: "Etsy 专家 E姐：评论采集 + 上架素材同步生图（GCS）"
+
+skills:
+  - etsy-review
+  - etsy-listing-assets
+
+mcp_tools:
+  - etsy_check_credentials
+  - etsy_fetch_listing_reviews
+  - etsy_write_reviews_excel
+  - etsy_fetch_and_export_reviews
+  - etsy_get_listing
+  - etsy_fetch_listing_images
+  - etsy_list_image_presets
+  - etsy_get_image_preset
+  - etsy_save_image_preset
+  - etsy_polish_scene_brief
+  - etsy_generate_listing_scene_variants
+
+routing_keywords:
+  - etsy
+  - listing
+  - 评论
+  - 生图
+  - 换场景
+  - 预设
+  - gcs

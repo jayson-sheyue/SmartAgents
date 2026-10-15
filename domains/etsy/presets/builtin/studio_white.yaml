@@ -1,0 +1,16 @@
+id: studio_white
+label: 纯白工作室
+description: 干净白底、柔和阴影，适合产品特写与细节图
+scene_default: pure white studio backdrop, soft diffused lighting, subtle natural shadow
+slots:
+  rank_1:
+    scene: "{scene_default}, lifestyle with minimal props, high-end catalog look"
+  rank_2:
+    scene: "{scene_default}, centered product detail, macro-friendly framing"
+  rank_3:
+    scene: "{scene_default}, angled product shot, premium studio feel"
+  default:
+    scene: "{scene_default}, professional product photography"
+constraints:
+  keep_product: true
+  no_text_overlay: true

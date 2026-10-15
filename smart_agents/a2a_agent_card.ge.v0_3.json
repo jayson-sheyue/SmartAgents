@@ -1,0 +1,102 @@
+{
+  "protocolVersion": "0.3",
+  "name": "SmartAgents A2A",
+  "description": "SmartAgents dispatcher (小智): greets users, routes Bilibili/Etsy RPA experts, optional RAG / TSE Firestore read-only tools / Code Execution. Cloud RPA requires reachable MCP endpoints.",
+  "url": "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/123456789012/locations/us-central1/reasoningEngines/1234567890123456789/a2a/v1/message:send",
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "image/png",
+    "image/jpeg"
+  ],
+  "skills": [
+    {
+      "id": "orchestration",
+      "name": "Dispatcher Orchestration",
+      "description": "Greet users, clarify intent, and transfer to Bilibili or Etsy domain experts when RPA is needed.",
+      "tags": [
+        "orchestration",
+        "dispatcher",
+        "multi-agent"
+      ],
+      "examples": [
+        "你好，你能做什么？",
+        "帮我查 B 站 UP 主粉丝",
+        "导出 Etsy listing 评论"
+      ]
+    },
+    {
+      "id": "rag_search",
+      "name": "Knowledge Base RAG",
+      "description": "Search team documents via Vertex RAG Engine (when RAG_ENABLED).",
+      "tags": [
+        "rag",
+        "knowledge"
+      ],
+      "examples": [
+        "Gemini Enterprise 权限怎么配？"
+      ]
+    },
+    {
+      "id": "search_tse_knowledge",
+      "name": "TSE Knowledge Deposit RAG",
+      "description": "Search documents uploaded via TSE knowledge deposit (GCS → Vertex RAG). Prefer for TSE 技术知识库 / recently deposited files.",
+      "tags": [
+        "rag",
+        "tse",
+        "knowledge"
+      ],
+      "examples": [
+        "知识库里关于 Vertex RAG 怎么说？"
+      ]
+    },
+    {
+      "id": "tse_readonly",
+      "name": "TSE Workspace Data (read-only)",
+      "description": "Query TSE Firestore customers, sales reports, shares, and stats via deterministic tools; keyword evidence search; optional TSE /chat (when GCP_DATA_MCP_ENABLED / TSE_API_*).",
+      "tags": [
+        "tse",
+        "firestore",
+        "readonly"
+      ],
+      "examples": [
+        "TSE 有多少客户？",
+        "梁伶飞的客户和日报",
+        "张方琼的客户有没有提到 BigQuery",
+        "画一张客户分布图"
+      ]
+    },
+    {
+      "id": "code_execution",
+      "name": "Code Execution Charts",
+      "description": "Run sandboxed Python for analytics/charts (when CODE_EXECUTION_ENABLED).",
+      "tags": [
+        "code-execution",
+        "charts"
+      ],
+      "examples": [
+        "用真实 TSE 数据画客户分布图"
+      ]
+    },
+    {
+      "id": "domain_rpa",
+      "name": "Bilibili / Etsy RPA",
+      "description": "Delegate to domain MCP tools for Bilibili fans Excel RPA and Etsy reviews/assets (requires reachable :8002/:8003 MCP).",
+      "tags": [
+        "bilibili",
+        "etsy",
+        "mcp",
+        "rpa"
+      ],
+      "examples": [
+        "更新桌面上 UP 主粉丝数 Excel"
+      ]
+    }
+  ]
+}

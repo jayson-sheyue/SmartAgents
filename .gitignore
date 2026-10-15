@@ -13,15 +13,32 @@ venv/
 .env
 .env.*
 !**/.env.example
+env/*.env
+!env/*.env.example
 .smart_agents/.env
 smart_agents/.env
 bilibili_state.json
+.sap_browser_profiles/
+.sap_bridge/
 
 # ADK deploy temp dirs
 bilibili_cloud_agent_tmp*/
 bilibili_cloud_agent_mcp_tmp*/
 cloud_agent_tmp*/
 cloud_agent_mcp_tmp*/
+.a2a_deploy_staging/
 
 # OS
 .DS_Store
+.sap_cloud/
+
+# Local deployment bundles, generated output, and private notes
+smart_agents_tmp*/
+tmp/
+output/
+.cursor/
+KC-checklist.md
+lab.md
+docs/sap_cloud_deployment_resources.md
+*.log
+gha-creds-*.json

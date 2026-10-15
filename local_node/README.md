@@ -1,128 +1,130 @@
-# local_node — REST 本地节点 + Web Widget
+# local_node — Web Widget
 
-本目录是 **REST 协议层**：把 L1 工具暴露为 HTTP API，供云端 REST Agent 或 Web Widget 调用。
+浏览器聊天页，把用户消息转给 **smart_agents 调度树**（local 本机 Runner 或 cloud Agent Engine）。
 
-| 领域 | L1 | REST 路由前缀 |
-|------|-----|---------------|
-| B 站 | [`bilibili_agent/bilibili_tools.py`](../bilibili_agent/bilibili_tools.py) | `/api/get_up_list` 等 |
-| Etsy | [`etsy_agent/etsy_tools.py`](../etsy_agent/etsy_tools.py) | `/api/etsy_*` |
-
-操作手册：[`../user_guide.md`](../user_guide.md) §2.2 · §3.2（REST）· §4.3（Widget）
-
-MCP 路径在 [`../mcp_server/`](../mcp_server/)，功能等价、协议不同。
+> 本目录 **仅保留 Widget**（`:8000`）。历史 REST 节点 `:8001` 已移除；工具统一走 MCP。
 
 ---
 
-## 文件说明
+## 文件
 
-| 文件 | 端口 | 作用 |
-|------|------|------|
-| `server.py` | **8001** | FastAPI：B 站 RPA + Etsy REST 路由 |
-| `widget_server.py` | **8000** | 前端入口（local: 本地 smart_agents Runner / cloud: Agent Engine） |
-| `index.html` | — | 聊天 Widget 页面（请求 `:8000/chat`） |
-| `openapi.json` | — | OpenAPI 描述（参考） |
-
----
-
-## API 映射（REST Tool ↔ Python）
-
-云端 `bilibili_cloud_agent` 中的函数与此一一对应（**P0 envelope**，实现见 [`../bilibili_agent/bilibili_tools.py`](../bilibili_agent/bilibili_tools.py)）：
-
-| REST 端点 | bilibili_cloud_agent 工具名 | rpa_tools |
-|-----------|-------------------|-----------|
-| `GET /api/get_up_list` | `get_up_list_from_node` | `tool_get_up_list` |
-| `POST /api/fetch_fans_data` | `fetch_fans_data_from_node` | `tool_fetch_fans_data` |
-| `POST /api/write_excel` | `write_excel_to_node` | `tool_write_excel` |
-
-**P0 响应**：直接返回 `{ok, tool, data, error, meta}` envelope，不再是 `{status, data}`。
-
-Excel 路径默认 `~/Desktop/Up主名称.xlsx`；可选 `excel_path`（须在 Desktop 或 `~/Documents/BilibiliRPA` 下）。
+| 文件 | 说明 |
+|------|------|
+| `widget_server.py` | FastAPI 服务，`:8000` |
+| `index.html` | 聊天 UI（访问 `http://127.0.0.1:8000/`） |
+| `openapi.json` | API 参考 |
 
 ---
 
-## 启动顺序
+## 调用链
 
-### 场景 A：云端 REST Agent / 本地 `adk run` / curl 直调
-
-```bash
-# 终端 1 — REST 节点（必做）
-python local_node/server.py
-# 终端 2 — 网络出口（二选一）
-#   A1) Cloudflare Tunnel（Playground / Widget / 与 .env 中 https 域名一致）
-cloudflared tunnel --url http://127.0.0.1:8001
-# .env: BILIBILI_REST_SERVER_URL=https://<你的域名>.trycloudflare.com
-
-#   A2) 仅本机 adk run，本机直连（免隧道）
-# .env 或命令行: BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001
+```
+浏览器 index.html
+  → POST :8000/chat
+  → widget_server.py
+       ├─ local:  进程内 ADK Runner（smart_agents）
+       └─ cloud:  Vertex streamQuery → Agent Engine
+  → 调度树 → MCP :8002 / :8003 → domains/
 ```
 
-`adk run bilibili_cloud_agent` 与 Playground 相同，经 HTTP 调 `BILIBILI_REST_SERVER_URL`，**不是**进程内 RPA。详见 [`../bilibili_cloud_agent/README.md`](../bilibili_cloud_agent/README.md)。
+---
 
-### 场景 B：Web Widget（双模式）
+## local 模式（推荐新手，免 deploy）
 
 ```bash
-# local 模式（免部署）
-# .env: WIDGET_RUN_MODE=local
-python mcp_server/bilibili_mcp.py --http   # 终端 1
-python mcp_server/etsy_mcp.py --http       # 终端 2
-python local_node/widget_server.py         # 终端 3
+# 终端 1
+python mcp_server/bilibili_mcp.py --http
 
-# cloud 模式（连 Agent Engine）
-# .env: WIDGET_RUN_MODE=cloud + SMART_AGENTS_ENGINE_ID（或 AGENT_RESOURCE_NAME）
-# 还需双 Cloudflare Tunnel（8002 / 8003）确保云端可访问 MCP
+# 终端 2
+python mcp_server/etsy_mcp.py --http
+
+# 终端 3
+# .env 或 env 中：WIDGET_RUN_MODE=local
 ./scripts/run_widget.sh
-# 或: python local_node/widget_server.py
-
-# 浏览器（推荐，避免 file:// 跨域问题）
-open http://localhost:8000/
 ```
 
-| 配置 | 说明 |
+浏览器打开：**http://127.0.0.1:8000/**
+
+验证：「先查 B 站粉丝，再导出 Etsy 评论」（测跨域调度）。  
+TSE / 作图：在 `.env` 开启 `GCP_DATA_MCP_ENABLED` / `CODE_EXECUTION_ENABLED` 后，对小智问「梁伶飞客户日报」或「客户分布图」。
+
+---
+
+## 能力说明
+
+| 能力 | Widget | 备注 |
+|------|:------:|------|
+| 调度树（阿B/E姐） | ✅ | 双 MCP 须先起 |
+| Memory Bank | ❌ | 匿名 `web_{uuid}` |
+| RAG / TSE / Code Exec | ✅ | 与小智一致，由 `.env` 控制 |
+
+---
+
+## cloud 模式
+
+```env
+WIDGET_RUN_MODE=cloud
+SMART_AGENTS_ENGINE_ID=your-engine-id
+GCP_PROJECT_NUMBER=...
+```
+
+前置：[`user_guide.md` §4.2](../user_guide.md)（双隧道 + 双 MCP + deploy）。
+
+```bash
+./scripts/run_widget.sh
+```
+
+纯闲聊只需 Widget + 已 deploy Engine；**RPA 任务仍须本机双 MCP + 隧道**。
+
+---
+
+## 插件嵌入（第三方 Web App）
+
+任意站点可用一行脚本接入，**不改宿主业务代码逻辑**（仅注入悬浮聊天窗）：
+
+```html
+<script
+  src="http://127.0.0.1:8000/embed.js"
+  data-api-base="http://127.0.0.1:8000"
+  data-title="SmartAgents"
+  data-position="bottom-right"
+  async
+></script>
+```
+
+或先设 `window.SMART_AGENTS_WIDGET = { url: 'http://127.0.0.1:8000' }` 再加载 `/embed.js`。
+
+`embed.js` 会 iframe 打开本服务的 `/?embed=1`（全屏聊天面板，隐藏自带悬浮钮）。  
+原有独立页 `http://127.0.0.1:8000/` 行为不变。
+
+---
+
+## 环境变量
+
+| 变量 | 说明 |
 |------|------|
 | `WIDGET_RUN_MODE` | `local` 或 `cloud` |
-| `SMART_AGENTS_ENGINE_ID` | cloud 模式默认目标 Engine |
-| `AGENT_RESOURCE_NAME` | 可选，显式覆盖目标 Engine |
-| `GCP_PROJECT_NUMBER` | Widget streamQuery 资源路径中的项目编号 |
-| `GCP_PROJECT_ID` | GCP 项目 ID |
-| `VERTEX_HTTP_PROXY` | 国内访问 GCP streamQuery 时需要（如 `http://127.0.0.1:7890`） |
-| `GET /health` | 检查 Widget 与当前模式依赖是否就绪 |
+| `GCP_PROJECT_ID` / `GCP_LOCATION` | 必填 |
+| `SMART_AGENTS_ENGINE_ID` | cloud 模式 |
+| `AGENT_RESOURCE_NAME` | 可选，覆盖 Engine |
+| `VERTEX_HTTP_PROXY` | 国内访问 GCP |
+| `WIDGET_PORT` | 默认 `8000` |
+| （嵌入）`/embed.js` | 第三方站点插件入口，见上文「插件嵌入」 |
 
-`POST /chat` 返回：`reply`、`session_id`（多轮会话）、`tool_events`（工具调用/结果摘要）。
-
-**Session 续接（Phase 2c+）**：刷新页面后对话不丢，依赖显式 Session API：
-
-| 端点 | 作用 |
-|------|------|
-| `POST /session` | 校验 `sessionStorage` 中的 id，无效则 `async_create_session` |
-| `POST /chat` | 内部先 `ensure_session`，再 `streamQuery`（始终带 `session_id`） |
-
-请求体示例：`{"user_id":"web_user_001","session_id":"可选","force_new":false}`
-
-Widget local/cloud 两种模式都支持同一前端页面 `index.html`。
+健康检查：`GET http://127.0.0.1:8000/health`
 
 ---
 
-## 与 MCP 路径对比
+## Session
 
-| | REST（本目录） | MCP（mcp_server/） |
-|---|----------------|---------------------|
-| 端口 | 8001 | 8002 |
-| 暴露方式 | 自定义 `/api/*` | MCP `tools/list` + `tools/call` |
-| 云端 Agent | `bilibili_cloud_agent` | `bilibili_cloud_agent_mcp` |
-| GCP 控制台 | 不注册 | Agent Registry → MCP Servers |
-
----
-
-## 升级改造
-
-1. **新增 API**：在 `server.py` 加路由 → 在 `bilibili_cloud_agent/agent.py` 加包装函数 → 更新 `skills/.../references/tools.md`
-2. **改 RPA 行为**：只改 [`bilibili_agent/bilibili_tools.py`](../bilibili_agent/bilibili_tools.py)，本目录通常只改请求/响应格式
-3. **Widget 换 Agent**：改 `widget_server.py` 的 `AGENT_RESOURCE_NAME`
+- 每浏览器 tab 独立 `session_id`（存 `sessionStorage`）
+- 点「新会话」清空当前 tab 上下文
+- **不使用** Memory Bank（匿名 `web_{uuid}`）
 
 ---
 
 ## 相关文档
 
-- 操作手册：[`../user_guide.md`](../user_guide.md) §2.2 · §3.2 · §4.3 · §6
-- B 站 REST Agent：[`../bilibili_cloud_agent/README.md`](../bilibili_cloud_agent/README.md)
-- Etsy REST Agent：[`../etsy_cloud_agent/README.md`](../etsy_cloud_agent/README.md)
+- [`../user_guide.md`](../user_guide.md) §4.3
+- [`../smart_agents/README.md`](../smart_agents/README.md)
+- [`../docs/agent_platform_learning_guide.md`](../docs/agent_platform_learning_guide.md)

@@ -15,7 +15,7 @@ mcp_server/run_sync.py — 在「独立子进程」里执行 fetch_fans_data（�
   ===RESULT_START===
   { ... envelope JSON ... }
   ===RESULT_END===
-  父进程从 stdout 里截取这两行之间的 JSON 解析后返回给 Cursor/Agent。
+  父进程从 stdout 里截取这两行之间的 JSON 解析后返回给 MCP Agent。
 """
 
 import sys

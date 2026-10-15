@@ -8,12 +8,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from smart_agents.env_runtime import load_runtime_env
 
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(_ROOT / ".env")
+load_runtime_env(default_env_path=str(_ROOT / ".env"))
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -50,6 +50,9 @@ class FeishuBridgeConfig:
     smart_agents_engine_id: str
     agent_resource_name: str
     vertex_http_proxy: str
+    local_session_guard_enabled: bool
+    local_session_max_events: int
+    local_session_max_chars: int
 
     @classmethod
     def from_env(cls) -> "FeishuBridgeConfig":
@@ -61,7 +64,7 @@ class FeishuBridgeConfig:
         ).strip()
         if not app_id or not app_secret:
             raise RuntimeError(
-                "请在 .env 设置 FEISHU_APP_ID 与 FEISHU_APP_SECRET（或 FEISHU_APP_TOKEN）"
+                "请在根 .env 设置 FEISHU_APP_ID 与 FEISHU_APP_SECRET（或 FEISHU_APP_TOKEN）"
             )
 
         db_dir = _ROOT / "integrations" / "feishu" / "data"
@@ -76,6 +79,11 @@ class FeishuBridgeConfig:
         agent_resource_name = (os.getenv("AGENT_RESOURCE_NAME") or "").strip()
         vertex_http_proxy = (
             (os.getenv("VERTEX_HTTP_PROXY") or os.getenv("HTTPS_PROXY") or "").strip()
+        )
+        local_session_guard_enabled = _env_bool("FEISHU_LOCAL_SESSION_GUARD_ENABLED", True)
+        local_session_max_events = int(os.getenv("FEISHU_LOCAL_SESSION_MAX_EVENTS", "240"))
+        local_session_max_chars = int(
+            os.getenv("FEISHU_LOCAL_SESSION_MAX_CHARS", "600000")
         )
 
         owner_open_id = (os.getenv("FEISHU_OWNER_OPEN_ID") or "").strip()
@@ -119,11 +127,11 @@ class FeishuBridgeConfig:
             run_mode=run_mode,
             mcp_server_url=os.getenv(
                 "SMART_AGENTS_BILIBILI_MCP_SERVER_URL",
-                os.getenv("BILIBILI_MCP_SERVER_URL", "http://127.0.0.1:8002/mcp"),
+                os.getenv("BILIBILI_MCP_SERVER_URL", ""),
             ),
             etsy_mcp_server_url=os.getenv(
                 "SMART_AGENTS_ETSY_MCP_SERVER_URL",
-                os.getenv("ETSY_MCP_SERVER_URL", "http://127.0.0.1:8003/mcp"),
+                os.getenv("ETSY_MCP_SERVER_URL", ""),
             ),
             session_db_path=db_dir / "feishu_sessions.db",
             ssl_verify=_env_bool("FEISHU_SSL_VERIFY", True),
@@ -133,6 +141,9 @@ class FeishuBridgeConfig:
             smart_agents_engine_id=smart_agents_engine_id,
             agent_resource_name=agent_resource_name,
             vertex_http_proxy=vertex_http_proxy,
+            local_session_guard_enabled=local_session_guard_enabled,
+            local_session_max_events=local_session_max_events,
+            local_session_max_chars=local_session_max_chars,
         )
 
 

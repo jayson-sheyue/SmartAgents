@@ -1,0 +1,16 @@
+id: outdoor_natural
+label: 户外自然
+description: 自然光、绿植与环境感，适合有机、手工类商品
+scene_default: natural outdoor daylight, organic textures, fresh greenery, earthy tones
+slots:
+  rank_1:
+    scene: "{scene_default}, lifestyle in garden or patio setting"
+  rank_2:
+    scene: "{scene_default}, product detail with blurred natural background"
+  rank_3:
+    scene: "{scene_default}, product among plants and natural materials"
+  default:
+    scene: "{scene_default}, authentic natural lifestyle"
+constraints:
+  keep_product: true
+  no_text_overlay: true

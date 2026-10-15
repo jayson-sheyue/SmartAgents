@@ -35,7 +35,6 @@ import google.auth
 import google.auth.transport.requests
 import requests
 import uvicorn
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -52,13 +51,14 @@ from google.adk.utils.context_utils import Aclosing
 from google.genai import types
 from pydantic import BaseModel
 
+from smart_agents.env_runtime import load_runtime_env
+
 # 确保以 `python local_node/widget_server.py` 启动时也能导入项目包（integrations/smart_agents）
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-# 加载项目根 .env
-load_dotenv(_ROOT / ".env")
+load_runtime_env(default_env_path=str(_ROOT / ".env"))
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID") or os.getenv("PROJECT_ID", "")
 LOCATION = os.getenv("GCP_LOCATION", "us-central1")
@@ -87,7 +87,8 @@ if WIDGET_RUN_MODE == "cloud":
     )
 
 WIDGET_PORT = int(os.getenv("WIDGET_PORT", "8000"))
-REST_NODE_PORT = int(os.getenv("REST_NODE_PORT", "8001"))
+BILIBILI_MCP_PORT = int(os.getenv("BILIBILI_MCP_PORT", "8002"))  # legacy local debug only
+ETSY_MCP_PORT = int(os.getenv("ETSY_MCP_PORT", "8003"))
 
 
 def _pick_vertex_proxy() -> Optional[str]:
@@ -155,9 +156,11 @@ def _build_local_runner() -> tuple[Runner, BaseSessionService]:
     from smart_agents.agent import root_agent
     from smart_agents.app_factory import build_smart_agents_app
 
-    # 与 smart_agents 脚本行为一致：本地默认双 MCP
-    os.environ.setdefault("BILIBILI_MCP_SERVER_URL", "http://127.0.0.1:8002/mcp")
-    os.environ.setdefault("ETSY_MCP_SERVER_URL", "http://127.0.0.1:8003/mcp")
+    # Cloud Run MCP URL 必须已在环境中（不再默认 localhost）
+    if not (os.environ.get("BILIBILI_MCP_SERVER_URL") or "").strip():
+        raise RuntimeError("未设置 BILIBILI_MCP_SERVER_URL（Cloud Run）")
+    if not (os.environ.get("ETSY_MCP_SERVER_URL") or "").strip():
+        raise RuntimeError("未设置 ETSY_MCP_SERVER_URL（Cloud Run）")
     apply_agent_env(
         type(
             "_Cfg",
@@ -346,6 +349,34 @@ def _get_stream_lock(key: str) -> asyncio.Lock:
     return _STREAM_LOCKS[key]
 
 
+def _redact_tool_args(tool_name: str, args: Any) -> Any:
+    """避免会话 Key 等敏感参数出现在 Widget 工具轨迹里。"""
+    if not isinstance(args, dict):
+        return args
+    sensitive_keys = {
+        "api_key",
+        "apikey",
+        "token",
+        "access_token",
+        "refresh_token",
+        "password",
+        "secret",
+        "authorization",
+    }
+    out: dict[str, Any] = {}
+    for key, value in args.items():
+        lk = str(key).lower()
+        if lk in sensitive_keys or "api_key" in lk or lk.endswith("_secret"):
+            out[key] = "***"
+        elif isinstance(value, str) and "sk_tse_" in value:
+            out[key] = "***"
+        else:
+            out[key] = value
+    if tool_name == "set_tse_session_api_key":
+        out["api_key"] = "***"
+    return out
+
+
 def _reply_from_stream_state(state: dict[str, Any]) -> str:
     """与飞书 cloud 一致：取本轮最后发言 Agent 的文本。"""
     by_author: dict[str, list[str]] = state.get("by_author") or {}
@@ -390,7 +421,7 @@ def _consume_stream_event(event_data: dict, state: dict) -> None:
                 state["tool_events"].append({
                     "type": "tool_call",
                     "name": fc.get("name", "?"),
-                    "args": fc.get("args") or {},
+                    "args": _redact_tool_args(fc.get("name", ""), fc.get("args") or {}),
                 })
             if "function_response" in part:
                 fr = part["function_response"] or {}
@@ -461,7 +492,7 @@ def stream_agent_reply(
         if state["tool_events"]:
             reply = "任务已执行，模型未返回额外文字说明（请查看下方工具步骤）。"
         else:
-            reply = "未收到文本回复，请确认 server.py 与 Cloudflare Tunnel 已启动。"
+            reply = "未收到文本回复，请确认双 MCP 服务器与 Cloudflare Tunnel 已启动。"
 
     return {
         "reply": reply,
@@ -501,18 +532,48 @@ def serve_index():
     return FileResponse(_STATIC_DIR / "index.html")
 
 
+@app.get("/embed.js")
+def serve_embed_js():
+    """
+    第三方 Web App 一行脚本接入（插件）：
+      <script src="http://127.0.0.1:8000/embed.js"
+              data-api-base="http://127.0.0.1:8000" async></script>
+    不改宿主业务逻辑；仅注入悬浮按钮 + iframe。
+    """
+    return FileResponse(
+        _STATIC_DIR / "embed.js",
+        media_type="application/javascript; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
 @app.get("/health")
 def health():
-    """启动自检：Widget 自身 + 本地 REST 节点是否在线。"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1)
-    rest_ok = sock.connect_ex(("127.0.0.1", REST_NODE_PORT)) == 0
-    sock.close()
+    """启动自检：Widget + Cloud Run MCP URL 是否配置。"""
+    import urllib.request
+
+    def _url_ok(url: str) -> bool:
+        if not url or "127.0.0.1" in url or "localhost" in url:
+            return False
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return 200 <= int(getattr(resp, "status", 200)) < 500
+        except Exception:
+            return False
+
+    bili = (os.getenv("BILIBILI_MCP_SERVER_URL") or "").strip()
+    etsy = (os.getenv("ETSY_MCP_SERVER_URL") or "").strip()
     return {
         "widget": "ok",
         "mode": WIDGET_RUN_MODE,
-        "rest_node_port": REST_NODE_PORT,
-        "rest_node_reachable": rest_ok,
+        "bilibili_mcp_url": bili,
+        "bilibili_mcp_reachable": _url_ok(bili),
+        "etsy_mcp_url": etsy,
+        "etsy_mcp_reachable": _url_ok(etsy),
         "agent_engine": AGENT_RESOURCE_NAME if WIDGET_RUN_MODE == "cloud" else "local_runner",
         "vertex_proxy": _VERTEX_PROXY,
     }
@@ -708,28 +769,12 @@ async def chat_with_agent_stream(req: ChatRequest):
 
 
 def _preflight_checks() -> None:
-    def _port_open(port: int) -> bool:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        ok = sock.connect_ex(("127.0.0.1", port)) == 0
-        sock.close()
-        return ok
-
-    if WIDGET_RUN_MODE == "cloud":
-        b_ok = _port_open(8002)
-        e_ok = _port_open(8003)
-        print(f"{'✅' if b_ok else '⚠️'} Bilibili MCP :8002 {'就绪' if b_ok else '未启动'}")
-        print(f"{'✅' if e_ok else '⚠️'} Etsy MCP :8003 {'就绪' if e_ok else '未启动'}")
-        if not (b_ok and e_ok):
-            print(
-                "💡 闲聊/调度对话不依赖本地端口；仅当触发 B 站/Etsy RPA 时才需要双 MCP + 隧道。\n"
-                "   调度树走 MCP（:8002/:8003），**不需要** local_node/server.py :8001。"
-            )
-    else:
-        b_ok = _port_open(8002)
-        e_ok = _port_open(8003)
-        print(f"{'✅' if b_ok else '⚠️'} Bilibili MCP :8002 {'就绪' if b_ok else '未启动'}")
-        print(f"{'✅' if e_ok else '⚠️'} Etsy MCP :8003 {'就绪' if e_ok else '未启动'}")
+    bili = (os.getenv("BILIBILI_MCP_SERVER_URL") or "").strip()
+    etsy = (os.getenv("ETSY_MCP_SERVER_URL") or "").strip()
+    print(f"{'✅' if bili and '127.0.0.1' not in bili else '⚠️'} Bilibili MCP: {bili or '(未设置)'}")
+    print(f"{'✅' if etsy and '127.0.0.1' not in etsy else '⚠️'} Etsy MCP: {etsy or '(未设置)'}")
+    if not bili or not etsy or "127.0.0.1" in bili or "127.0.0.1" in etsy:
+        print("💡 请部署 Cloud Run MCP 并在 .env 设置 BILIBILI_MCP_SERVER_URL / ETSY_MCP_SERVER_URL")
 
     print(f"🌐 Widget:      http://0.0.0.0:{WIDGET_PORT}/")
     if WIDGET_RUN_MODE == "cloud":
@@ -738,10 +783,7 @@ def _preflight_checks() -> None:
         print("🏠 Mode: local | in-process smart_agents runner")
     if _VERTEX_PROXY:
         print(f"🔐 Vertex 代理: {_VERTEX_PROXY}")
-    if WIDGET_RUN_MODE == "cloud":
-        print("💡 cloud 模式还需 Cloudflare Tunnel + .env 中 smart_agents 的公网 MCP URL")
-    else:
-        print("💡 local 模式无需部署 Agent Engine；确保本地双 MCP 已启动")
+    print("💡 MCP 走 Cloud Run：./scripts/deploy_*_mcp_cloudrun.sh")
 
 
 if __name__ == "__main__":

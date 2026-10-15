@@ -1,176 +1,163 @@
 # SmartAgents 操作手册
 
-> 全场景「照着做就能跑」清单 + 命令矩阵。  
-> **新开发者请先读 [§0 前置条件](#0-开发者本地部署前置条件总览)**（依赖安装、GCP、Etsy 凭证、cloudflared、飞书）。  
-> 架构总览：[`README.md`](README.md) · 脚本索引：[`scripts/README.md`](scripts/README.md) · ADK 概念：[`docs/adk_learning_guide.md`](docs/adk_learning_guide.md)
+> 面向**从未接触过本项目**的开发者：按章节勾选即可完成环境准备、选场景、启动与排错。  
+> 架构鸟瞰：[`README.md`](README.md) · 脚本索引：[`scripts/README.md`](scripts/README.md) · 环境 profile：[`env/README.md`](env/README.md)
 
 ---
 
-## 0) 开发者本地部署：前置条件总览
+## 0) 前置条件总览
 
-> **读完本节再选 [§1](#1-场景速查先选你要跑哪条)**。不同场景所需条件不同；下表标「按需」的项可跳过。
+### 0.1 按场景需要什么？
 
-### 0.1 按场景需要装什么？（速查）
+| 条件 | 几乎所有场景 | 仅 B 站 | 仅 Etsy | 本地 `adk run` | 云端 **cloud** | 飞书 | RAG | TSE | Code Exec |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| §0.2 Python + 依赖 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| §0.3 `.env` + `local.env` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| §0.4 B 站登录 + Excel | — | ✅ | — | 视任务 | B 站任务 | B 站任务 | — | — | — |
+| §0.5 Etsy 凭证 + GCS | — | — | ✅ | 视任务 | Etsy 任务 | Etsy 任务 | — | — | — |
+| §0.6 Cloudflare 隧道 | — | — | — | ❌ | ✅ | cloud | — | — | — |
+| §0.7 飞书应用 | — | — | — | — | — | ✅ | — | — | — |
+| §0.8 deploy + Engine ID | — | — | — | ❌ | ✅ | cloud | ✅ | ✅ | ✅ |
 
-| 条件 | 几乎所有 Agent 场景 | 仅 B 站 | 仅 Etsy | 仅本地 `127.0.0.1` | 云端 Playground / Widget·飞书 **cloud** | 飞书入口 | RAG |
-|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| §0.2 Python + `requirements.txt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| §0.3 GCP + `gcloud` ADC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅（cloud） | ✅ |
-| §0.4 B 站登录 + Excel | — | ✅ | — | 视场景 | B 站任务时 | B 站任务时 | — |
-| §0.5 Etsy 开发者凭证 | — | — | ✅ | 视场景 | Etsy 任务时 | Etsy 任务时 | — |
-| §0.6 `cloudflared` 隧道 | — | — | — | ❌ 不需要 | ✅ | cloud 时需要 | — |
-| §0.7 飞书应用凭证 | — | — | — | — | — | ✅ | — |
-| §0.8 `adk deploy` + Engine ID | — | — | — | ❌ | ✅ | cloud 时需要 | ✅ |
-
-**本地纯调试**（`adk run`、Widget local、飞书 local）：**不需要** cloudflared，MCP/REST 用 `http://127.0.0.1` 即可。  
-**云端 Agent Engine 调本机 RPA**：必须 **双 MCP 常开 + 双隧道 + deploy**（见 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)）。
+**本地纯调试**（`adk run`、飞书 `local`、Widget `local`）：双 MCP 用 `127.0.0.1`，**不需要**隧道。
 
 ---
 
-### 0.2 本机环境与 Python 依赖（必做）
+### 0.2 克隆仓库与 Python 环境（必做）
 
-**系统建议**：macOS / Linux；Windows 未完整验证（Playwright RPA 可能需额外配置）。
-
-**需预先安装**：
-
-| 工具 | 用途 | 安装示例 |
-|------|------|----------|
-| **Python 3.10+** | 运行 Agent、MCP、Bridge | 系统自带或 `brew install python@3.11` |
-| **Git** | 克隆仓库 | 系统自带 / `brew install git` |
-| **Google Cloud SDK**（`gcloud`） | ADC 登录、deploy | [安装文档](https://cloud.google.com/sdk/docs/install) |
-| **ADK CLI**（`adk` 命令） | `adk run` / `adk deploy` | 随 `pip install -r requirements.txt` 安装 `google-adk` |
-
-**项目依赖（仓库根目录）**：
+**建议系统**：macOS / Linux（Windows + Playwright 未完整验证）。
 
 ```bash
-cd /path/to/SmartAgents
+git clone <your-repo-url> SmartAgents
+cd SmartAgents
+
 python3 -m venv .venvAgents
-source .venvAgents/bin/activate          # Windows: .venvAgents\Scripts\activate
+source .venvAgents/bin/activate    # Windows: .venvAgents\Scripts\activate
 
 pip install -r requirements.txt
-playwright install chromium               # B 站 RPA 必需；仅跑 Etsy 可先跳过
+playwright install chromium        # B 站 RPA；只跑 Etsy 可先跳过
 ```
 
 验证：
 
 ```bash
 python -c "import google.adk; print('adk ok')"
-adk --help                                # 应能看到 run / deploy 子命令
+adk --help
 ```
 
-**飞书 Bridge 额外依赖**（跑 `./scripts/run_feishu_smart_agents.sh` 时；脚本会自动 `pip install`，也可手动）：
+飞书 Bridge 额外依赖（跑 `run_feishu_smart_agents.sh` 时脚本会提示安装）：
 
 ```bash
 pip install -r integrations/feishu/requirements.txt
 ```
 
-**可选（国内访问 Vertex AI）**：在 `.env` 设置 `VERTEX_HTTP_PROXY=http://127.0.0.1:7890`（或你的代理端口）。
+**国内访问 Vertex**：在 env 中加 `VERTEX_HTTP_PROXY=http://127.0.0.1:7890`（按你的代理端口改）。
 
 ---
 
-### 0.3 Google Cloud（跑 LLM / deploy 必做）
+### 0.3 环境配置（必读：两个文件）
 
-所有 `adk run` / `adk deploy` 路径都会调用 **Vertex AI（Gemini）**，需要：
+> 详细说明：[`env/README.md`](env/README.md)
 
-1. 有可用的 **GCP 项目**（已开通计费）
-2. 启用 **Vertex AI API**
-3. 本机 ADC 登录：
+#### 第一步：根目录 `.env`（密钥总表，只填一次）
 
 ```bash
 cp .env.example .env
-# 编辑 .env：
-#   GCP_PROJECT_ID=your-gcp-project-id
-#   GCP_PROJECT_NUMBER=000000000000    # 控制台 Home → 项目编号
-#   GCP_LOCATION=us-central1
+# 编辑 .env — 至少填 GCP；按你要测的入口再加 Etsy / 飞书 / GCS / RAG（见下表）
 
 gcloud auth application-default login
 gcloud config set project $GCP_PROJECT_ID
 ```
 
-**仅本地 `adk run`**：填好上述三项即可，**不必**先 deploy。  
-**云端 Playground / Widget·飞书 cloud**：还需 `SMART_AGENTS_ENGINE_ID`（或各单领域 `*_AGENT_ENGINE_ID`），通过 [§6](#6-云端部署清单可选) `adk deploy` 获得。
+#### 第二步：`env/local.env`（本地入口覆盖，强烈推荐）
+
+```bash
+cp env/local.env.example env/local.env
+# 一般保持默认即可（强制 FEISHU_RUN_MODE=local + 127.0.0.1 MCP）
+```
+
+**加载顺序**：所有 `run_adk_*.sh` / `run_feishu_*.sh` 先读 `.env`，再读 `env/local.env`（后者覆盖前者）。  
+MCP 与 Agent 脚本均加载 `.env` → `env/local.env`。在仓库根启动 MCP 即可。
+
+#### 按入口：`.env` 里要填什么？
+
+| 入口 | 启动命令 | `.env` **必填** | `.env` **按需**（做对应任务时） |
+|------|----------|-----------------|--------------------------------|
+| B 站单域 | `run_adk_bilibili_agent.sh` | `GCP_PROJECT_ID`、`GCP_LOCATION` | — |
+| Etsy 单域 | `run_adk_etsy_agent.sh` | 上 + `ETSY_KEYSTRING`、`ETSY_SHARED_SECRET` | 生图：`ETSY_IMAGE_GCS_BUCKET` 等 |
+| 调度树 | `run_adk_smart_agents.sh` | `GCP_*` | Etsy 任务 → Etsy 凭证；知识库 → `RAG_*`；TSE → `GCP_DATA_MCP_*`；作图 → `CODE_EXECUTION_*` |
+| 飞书 | `run_feishu_smart_agents.sh` | `GCP_*`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET` | Etsy、RAG、TSE（`GCP_DATA_MCP_*`）、Code Exec |
+| Widget | `run_widget.sh` | `GCP_*` | `WIDGET_RUN_MODE`；cloud → `SMART_AGENTS_ENGINE_ID` |
+| 只起 MCP | `python mcp_server/etsy_mcp.py --http` | Etsy 凭证在 `.env` | 生图 GCS |
+| 云端 deploy | `deploy_smart_agents.sh` | `GCP_*`、`SMART_AGENTS_ENGINE_ID`、公网 MCP URL | `RAG_*`、`GCP_DATA_MCP_*`、`CODE_EXECUTION_*` |
+
+每个本地入口还需要 **`env/local.env`**（`cp env/local.env.example env/local.env`）+ **另开终端起 MCP**（见 §1）。
+
+#### 环境检查
+
+`run_*` 脚本会**自动**检查，不必单独跑。排错：
+
+```bash
+python scripts/check_runtime_env.py --mode smart_agents
+python scripts/check_runtime_env.py --mode feishu
+```
 
 ---
 
 ### 0.4 B 站 RPA（按需）
 
-涉及 B 站粉丝抓取、Excel 读写时需：
-
 | 项 | 说明 |
 |----|------|
-| Playwright Chromium | `playwright install chromium`（见 §0.2） |
-| B 站登录态 | `python -m bilibili_agent login` → 生成根目录 `bilibili_state.json`（已在 `.gitignore`） |
-| UP 主名单 Excel | 默认 `~/Desktop/Up主名称.xlsx`（首列或指定列为 UP 主名） |
+| Chromium | `playwright install chromium` |
+| 登录态 | `python -m bilibili_agent login` → 根目录 `bilibili_state.json`（已 gitignore） |
+| UP 主 Excel | 默认 `~/Desktop/Up主名称.xlsx`（首列为 UP 主名） |
 
-自检（无大模型）：
+无 Agent 直测 RPA：
 
 ```bash
 python scripts/test_p0_local.py
 ```
 
+B 站 Agent 启动前 **必须先** 起 MCP：
+
+```bash
+python mcp_server/bilibili_mcp.py --http   # 终端 1，保持运行
+./scripts/run_adk_bilibili_agent.sh         # 终端 2
+```
+
 ---
 
-### 0.5 Etsy Open API 凭证（按需）
+### 0.5 Etsy 凭证与生图（按需）
 
-涉及 Etsy 评论拉取、导出 Excel 时需在本机 `.env` 配置（**不上云**）：
+写入**根 `.env`**：
 
 ```env
 ETSY_KEYSTRING=your-keystring
 ETSY_SHARED_SECRET=your-shared-secret
-# 或合并写法：ETSY_API_KEY=keystring:shared_secret
+ETSY_IMAGE_GCS_BUCKET=your-bucket   # 真实生图需要
 ```
 
-#### 如何获取（Etsy 开发者平台）
+获取与验证见 [Etsy Developers](https://www.etsy.com/developers/your-apps)；`python scripts/test_etsy_local.py --check-credentials --verify-api`
 
-1. 打开 [Etsy Developers — Your Apps](https://www.etsy.com/developers/your-apps) 并登录 Etsy 账号。  
-2. **Create a new app**（若尚无应用）：填写应用名称、描述；类型选适合 **个人/脚本调用 Open API v3** 的用途（按页面提示填写）。  
-3. 创建后在应用详情页找到：  
-   - **Keystring**（即 `ETSY_KEYSTRING`）  
-   - **Shared secret**（即 `ETSY_SHARED_SECRET`）  
-4. 写入仓库根 `.env`（勿提交 Git）。  
-5. 验证：
-
-```bash
-python scripts/test_etsy_local.py --check-credentials --verify-api
-```
-
-**说明**：Etsy API 有速率与权限限制；`listing_id` 须为你有权访问的店铺商品。测试可用：
-
-```bash
-python scripts/test_etsy_local.py --listing-id <数字ID> --live-fetch
-```
+Etsy Agent：**先** `python mcp_server/etsy_mcp.py --http`，**再** `./scripts/run_adk_etsy_agent.sh`
 
 ---
 
-### 0.6 Cloudflare Quick Tunnel（仅云端调本机 MCP/REST）
+### 0.6 Cloudflare Quick Tunnel（仅云端调本机 MCP）
 
-**何时需要**：Agent Engine Playground、Widget **cloud**、飞书 **cloud** —— 云端要能 HTTPS 访问你本机的 `:8002` / `:8003`（调度树）或 `:8001`（单领域 REST）。
+**何时需要**：Agent Engine Playground、Widget `cloud`、飞书 `cloud`。
 
-**何时不需要**：纯本地 `adk run`、Widget **local**、飞书 **local**、MCP URL 填 `http://127.0.0.1:*`。
-
-**安装 cloudflared**（macOS 示例）：
+**何时不需要**：本地 `adk run`、飞书 `local`、Widget `local`。
 
 ```bash
-brew install cloudflare/cloudflare/cloudflared
-cloudflared --version
+brew install cloudflare/cloudflare/cloudflared   # macOS 示例
+
+# 各开一个终端
+./scripts/start_cloudflare_tunnel.sh 8002   # B 站 MCP
+./scripts/start_cloudflare_tunnel.sh 8003   # Etsy MCP
 ```
 
-**启动隧道**（每个端口 **单独一个终端**，脚本会转发到本机）：
-
-```bash
-# B 站 MCP（:8002）
-./scripts/start_cloudflare_tunnel.sh 8002
-
-# Etsy MCP（:8003）— 调度树云端需要第二个终端
-./scripts/start_cloudflare_tunnel.sh 8003
-
-# 单领域 REST 云端（:8001）— 仅 bilibili_cloud_agent / etsy_cloud_agent
-./scripts/start_cloudflare_tunnel.sh 8001
-```
-
-终端会打印 `https://<uuid>.trycloudflare.com`。**Quick Tunnel 域名每次重启会变**，需更新 `.env` 后 **再启动 MCP**（使 `*_TUNNEL_HOST` 白名单生效），然后 redeploy。完整顺序见 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)。
-
-写入 `.env` 示例（调度树双 MCP）：
+从输出复制 `https://<uuid>.trycloudflare.com`，写入根 `.env`：
 
 ```env
 BILIBILI_MCP_SERVER_URL=https://<bilibili-uuid>.trycloudflare.com/mcp
@@ -179,512 +166,371 @@ BILIBILI_TUNNEL_HOST=<bilibili-uuid>.trycloudflare.com
 ETSY_TUNNEL_HOST=<etsy-uuid>.trycloudflare.com
 ```
 
-**注意**：隧道进程须 **常开**；本机 MCP 也须常开。Clash/VPN 的 fake-ip 可能导致隧道 SSL 异常，排错见 [§7](#7-高频故障快速排查)。
+**顺序**：先隧道拿域名 → 写 `.env` → **再启动 MCP**（白名单在 MCP 启动时加载）→ deploy。
+
+隧道进程与 MCP 须 **常开**。Clash fake-ip 可能导致 SSL 异常（§7）。
 
 ---
 
 ### 0.7 飞书开放平台（仅飞书入口）
 
-1. [飞书开放平台](https://open.feishu.cn/) 创建企业自建应用，开启 **机器人** 能力。  
-2. 在「凭证与基础信息」复制 **App ID**、**App Secret** 到 `.env`：
-
-```env
-FEISHU_RUN_MODE=local          # 或 cloud
-FEISHU_APP_ID=cli_xxxxxxxxxx
-FEISHU_APP_SECRET=your-app-secret
-```
-
-3. **事件订阅**：`im.message.receive_v1`，接收方式选 **使用长连接接收事件**（须 **先启动** `./scripts/run_feishu_smart_agents.sh` 再在后台保存）。  
-4. **cloud 模式**另需：`SMART_AGENTS_ENGINE_ID` + [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 隧道与 deploy。  
-5. 可选护栏：`FEISHU_OWNER_OPEN_ID`、`FEISHU_OWNER_ALIASES`（见 [§5.4](#54-防提示词注入主人忠诚模式)）。
-
-详见 [`integrations/feishu/README.md`](integrations/feishu/README.md)。
+1. [飞书开放平台](https://open.feishu.cn/) 创建应用，开启机器人  
+2. **App ID / Secret 写在根 `.env`**；`env/local.env` 保持 `FEISHU_RUN_MODE=local`  
+3. 事件 `im.message.receive_v1`，长连接（先启动 Bridge 再保存）  
+4. 详见 [`integrations/feishu/README.md`](integrations/feishu/README.md)
 
 ---
 
-### 0.8 配置 `.env` 并做一次最小自检
+## 1) 场景速查
 
-```bash
-cp .env.example .env
-# 至少填写：GCP_PROJECT_ID、GCP_PROJECT_NUMBER、GCP_LOCATION
-# 按场景追加：ETSY_*、FEISHU_*、SMART_AGENTS_ENGINE_ID、隧道 URL 等
-```
+> 完成 §0 后，在下表找到目标行，按列开终端并执行入口命令。
 
-**本地模式 URL 模板**（无需隧道）：
+### 单领域 Agent
 
-```env
-WIDGET_RUN_MODE=local
-FEISHU_RUN_MODE=local
-BILIBILI_MCP_SERVER_URL=http://127.0.0.1:8002/mcp
-ETSY_MCP_SERVER_URL=http://127.0.0.1:8003/mcp
-BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001
-ETSY_REST_SERVER_URL=http://127.0.0.1:8001
-```
+| 目标 | 终端 1（常开） | 终端 2（入口） | 配置 |
+|------|----------------|----------------|------|
+| **B 站 Agent** | `python mcp_server/bilibili_mcp.py --http` | `./scripts/run_adk_bilibili_agent.sh` | `.env` GCP + `env/local.env` + §0.4 登录 |
+| **Etsy Agent** | `python mcp_server/etsy_mcp.py --http` | `./scripts/run_adk_etsy_agent.sh` | `.env` GCP+Etsy + `env/local.env` |
 
-**最小自检路径**（确认依赖与凭证，仍不必 deploy）：
+> 脚本自动检查 env；**MCP 须先在另一终端常开**。
 
-```bash
-source .venvAgents/bin/activate
-gcloud auth application-default print-access-token | head -c 20   # 有输出即可
-python scripts/test_p0_local.py                                  # B 站工具（可选）
-python scripts/test_etsy_local.py --check-credentials --verify-api  # Etsy（可选）
-```
+### 调度树（小智 + 阿B + E姐）
 
----
+| 目标 | 终端 1 | 终端 2 | 终端 3 |
+|------|--------|--------|--------|
+| **本地 adk run** | B 站 MCP :8002 | Etsy MCP :8003 | `./scripts/run_adk_smart_agents.sh` |
 
-## 1) 场景速查（先选你要跑哪条）
+> `.env` + `env/local.env`；脚本自动检查 GCP + 双 MCP URL。
 
-> **怎么用这张表**：先完成 [§0](#0-开发者本地部署前置条件总览)；在下表找到目标行，按「本地终端」列开终端。**云端调度树**统一走 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用)（先隧道拿域名 → 写 `.env` → 启 MCP → deploy → 入口）。
+验证话术：
 
-### 单领域（只跑 B 站或 Etsy 其中一个 Agent）
+- 「帮我查 Excel 里 UP 主粉丝数」→ 转阿B
+- 「导出 listing 12345 的评论」→ 转 E姐
+- 「你好，你能做什么？」→ 小智直接答，不 transfer
+- 「梁伶飞的客户名单，每人抽一条日报」→ 小智 `get_tse_sales_customer_reports`（需 `GCP_DATA_MCP_ENABLED`）
+- 「画一张 TSE 客户归属销售分布图」→ 小智 `render_tse_customer_sales_chart`（需 Code Execution）
 
-| 目标 | 本地终端要跑什么 | `.env` / 前置 | 入口（在项目根执行） | 详细步骤 |
-|------|------------------|---------------|----------------------|----------|
-| **B 站进程内** Agent | 无额外服务 | §0：`python -m bilibili_agent login`；桌面有 `Up主名称.xlsx` | `./scripts/run_adk_bilibili_agent.sh` | [§2.1](#21-进程内最简单) |
-| **Etsy 进程内** Agent | 无额外服务 | §0：`ETSY_KEYSTRING` / `ETSY_SHARED_SECRET` | `./scripts/run_adk_etsy_agent.sh` | [§3.1](#31-进程内最简单) |
-| **B 站 REST** Agent | **终端 1**：`python local_node/server.py`（:8001） | 本地：`BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001` | `./scripts/run_adk_bilibili_cloud_agent.sh` | [§2.2](#22-rest本机或云端链路) |
-| **Etsy REST** Agent | **终端 1**：`local_node/server.py`（:8001，与 B 站共用） | 本地：`ETSY_REST_SERVER_URL=http://127.0.0.1:8001` | `./scripts/run_adk_etsy_cloud_agent.sh` | [§3.2](#32-rest) |
-| **B 站 MCP** Agent | **终端 1**：`python mcp_server/bilibili_mcp.py --http`（:8002） | 本地：`BILIBILI_MCP_SERVER_URL=http://127.0.0.1:8002/mcp` | `./scripts/run_adk_bilibili_cloud_agent_mcp.sh` | [§2.3](#23-mcp本机或云端链路) |
-| **Etsy MCP** Agent | **终端 1**：`python mcp_server/etsy_mcp.py --http`（:8003） | 本地：`ETSY_MCP_SERVER_URL=http://127.0.0.1:8003/mcp` | `./scripts/run_adk_etsy_cloud_agent_mcp.sh` | [§3.3](#33-mcp) |
+### 多入口（底层都是 smart_agents）
 
-### 调度树（小智调度阿B + E姐，双领域）
+| 目标 | 本地常开 | 入口 | 关键 env |
+|------|----------|------|----------|
+| **飞书 local** | 双 MCP | `./scripts/run_feishu_smart_agents.sh` | `.env` 含飞书凭证 + `local.env` 强制 local |
 
-| 目标 | 本地终端（常开） | 一次性 / 入口 | `.env` / 前置 | 详细步骤 |
-|------|------------------|---------------|---------------|----------|
-| **调度树本地** `adk run` | **1–2**：双 MCP（:8002 / :8003）<br>**3**：`run_adk_smart_agents.sh` | 终端 3 即入口 | §0 完成；脚本默认连 `127.0.0.1` 双 MCP | [§4.1](#41-本地调度树) |
-| **调度树云端** Playground | **1–2**：双隧道<br>**3–4**：双 MCP | **5**：`deploy_smart_agents.sh`（跑完可关）<br>入口：GCP Console Playground | 隧道域名已写入 `.env` 后再启 MCP；已 deploy | [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) · [§6](#6-云端部署清单可选) |
+> 脚本自动检查飞书 App ID/Secret。
+| **飞书 cloud** | 双隧道 + 双 MCP + deploy | 同上 | `FEISHU_RUN_MODE=cloud` + `SMART_AGENTS_ENGINE_ID` |
+| **Widget local** | 双 MCP | `./scripts/run_widget.sh` | `WIDGET_RUN_MODE=local` |
+| **Widget cloud** | 双隧道 + 双 MCP + deploy | 同上 | `WIDGET_RUN_MODE=cloud` |
+| **Playground** | 双隧道 + 双 MCP + deploy | GCP Console | `SMART_AGENTS_ENGINE_ID` |
 
-### 多入口（Widget / 飞书，底层都是调度树）
-
-> **云端模式**（Widget cloud / 飞书 cloud）与 Playground **共用同一套底座**：[§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 的终端 **1–5** 跑通后，再开 **终端 6** 启动对应入口。
-
-| 目标 | 本地终端（常开） | 一次性 / 入口 | `.env` / 前置 | 详细步骤 |
-|------|------------------|---------------|---------------|----------|
-| **Widget 本地** | **1–2**：双 MCP<br>**3**：`widget_server.py` | 浏览器 `http://127.0.0.1:8000/` | `WIDGET_RUN_MODE=local` | [§4.3 A](#43-widget-入口双模式) |
-| **Widget 云端** | **1–2**：双隧道<br>**3–4**：双 MCP<br>**6**：`widget_server.py` | **5**：`deploy_smart_agents.sh`<br>浏览器 `http://127.0.0.1:8000/` | `WIDGET_RUN_MODE=cloud` + `SMART_AGENTS_ENGINE_ID` | [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) · [§4.3 B](#43-widget-入口双模式) |
-| **飞书 local** | **1–2**：双 MCP<br>**3**：`run_feishu_smart_agents.sh` | 飞书群聊 `@机器人` 或私聊 | `FEISHU_RUN_MODE=local` + 飞书凭证 | [§5.1](#51-local-模式默认本地-runner) |
-| **飞书 cloud** | **1–2**：双隧道<br>**3–4**：双 MCP<br>**6**：`run_feishu_smart_agents.sh` | **5**：`deploy_smart_agents.sh`<br>飞书群聊 `@机器人` 或私聊 | `FEISHU_RUN_MODE=cloud` + `SMART_AGENTS_ENGINE_ID` | [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) · [§5.2](#52-cloud-模式云端-agent-runtime) |
-
-**端口速记**：REST `:8001`（仅 REST 单模块）· B 站 MCP `:8002` · Etsy MCP `:8003` · Widget `:8000`。**调度树 / Widget cloud / 飞书 cloud 走 MCP，不走 :8001。**
-
-**云端终端数速记**：常开 **4**（双隧道 + 双 MCP）+ 一次性 **1**（deploy）+ 入口 **1**（Widget 或飞书 Bridge）= 最多 **6** 个终端；Playground 测通底座后 **不必** 再开第 6 个本地进程。
+**端口**：B 站 MCP `:8002` · Etsy MCP `:8003` · Widget `:8000`。
 
 ---
 
-## 2) B 站单模块清单
+## 2) B 站单域 — 逐步清单
 
-### 2.1 进程内（最简单）
-
-- [ ] 已完成 `python -m bilibili_agent login`
+- [ ] `playwright install chromium`
+- [ ] `python -m bilibili_agent login`
 - [ ] 桌面有 `Up主名称.xlsx`
-- [ ] 启动：`./scripts/run_adk_bilibili_agent.sh`
-- [ ] 验证：发一句「读取 Excel 里所有 UP 主并写回粉丝数」
-
-### 2.2 REST（本机或云端链路）
-
-- [ ] 启动 REST 节点：`python local_node/server.py`
-- [ ] 本机直连（推荐本地调试）：
-```bash
-BILIBILI_REST_SERVER_URL=http://127.0.0.1:8001 ./scripts/run_adk_bilibili_cloud_agent.sh
-```
-- [ ] 云端：开 `cloudflared tunnel --url http://127.0.0.1:8001` 并更新 `.env` 的 `BILIBILI_REST_SERVER_URL`
-- [ ] 健康检查：`curl http://127.0.0.1:8001/docs`
-
-### 2.3 MCP（本机或云端链路）
-
-- [ ] 启动 B 站 MCP：`python mcp_server/bilibili_mcp.py --http`
-- [ ] 本机直连：
-```bash
-BILIBILI_MCP_SERVER_URL=http://127.0.0.1:8002/mcp ./scripts/run_adk_bilibili_cloud_agent_mcp.sh
-```
-- [ ] 云端（单 MCP 模块）：见 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 中「步骤 1–4」的单端口版（只开 :8002 隧道 + MCP）
+- [ ] 终端 1：`python mcp_server/bilibili_mcp.py --http`
+- [ ] 终端 2：`./scripts/run_adk_bilibili_agent.sh`
+- [ ] 对话：「读取 Excel 里所有 UP 主并写回粉丝数」
+- [ ] Agent 会先 `load_skill('bilibili-rpa')`，再调 MCP 工具
 
 ---
 
-## 3) Etsy 单模块清单
+## 3) Etsy 单域 — 逐步清单
 
-### 3.1 进程内（最简单）
-
-- [ ] `.env` 已配置 `ETSY_KEYSTRING` / `ETSY_SHARED_SECRET`
-- [ ] 凭证自检：`python scripts/test_etsy_local.py --check-credentials --verify-api`
-- [ ] 启动：`./scripts/run_adk_etsy_agent.sh`
-
-### 3.2 REST
-
-- [ ] 启动 REST 节点：`python local_node/server.py`
-- [ ] 本机直连：`ETSY_REST_SERVER_URL=http://127.0.0.1:8001 ./scripts/run_adk_etsy_cloud_agent.sh`
-- [ ] 云端：隧道 :8001 并更新 `ETSY_REST_SERVER_URL`
-
-### 3.3 MCP
-
-- [ ] 启动 Etsy MCP：`python mcp_server/etsy_mcp.py --http`
-- [ ] 本机直连：`ETSY_MCP_SERVER_URL=http://127.0.0.1:8003/mcp ./scripts/run_adk_etsy_cloud_agent_mcp.sh`
-- [ ] 云端（单 MCP 模块）：见 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 单端口版（:8003）
+- [ ] 配置 `ETSY_KEYSTRING` / `ETSY_SHARED_SECRET`
+- [ ] `python scripts/test_etsy_local.py --check-credentials --verify-api`
+- [ ] （生图）配置 `ETSY_IMAGE_GCS_BUCKET` 等
+- [ ] 终端 1：`python mcp_server/etsy_mcp.py --http`
+- [ ] 终端 2：`./scripts/run_adk_etsy_agent.sh`
+- [ ] 评论：「导出 listing \<id\> 的评论到 Excel」
+- [ ] 生图：「用 nordic_lifestyle 预设给这张图换场景」（会先 `load_skill('etsy-listing-assets')`）
 
 ---
 
-## 4) Agent 树（smart_agents）清单
+## 4) 调度树 — 逐步清单
 
-### 4.1 本地调度树
+### 4.1 本地（推荐新手）
 
-- [ ] 双 MCP：`:8002` + `:8003`
-- [ ] `./scripts/run_adk_smart_agents.sh`
-- [ ] 验证路由：
-  - 「帮我查 B 站 UP 主粉丝数」→ 阿B
-  - 「导出 Etsy listing 评论」→ E姐
-  - 「你好」→ 小智直接答，不 transfer
+- [ ] `.env` + `env/local.env` 已配置
+- [ ] 终端 1：`python mcp_server/bilibili_mcp.py --http`
+- [ ] 终端 2：`python mcp_server/etsy_mcp.py --http`
+- [ ] 终端 3：`./scripts/run_adk_smart_agents.sh`
+- [ ] 验证双域路由（§1 话术）
 
-> `adk run` 加载 `root_agent`，**不含** Memory Plugin / Session 压缩。长期记忆与压缩仅在云端 `--adk_app_object=app` 部署后生效。
+> `adk run` 不含 Memory Plugin / 事件压缩；长期记忆需云端 deploy（§6）。
 
-### 4.2 云端调度树底座（Playground / Widget cloud / 飞书 cloud 共用）
+### 4.2 云端底座（Playground / Widget cloud / 飞书 cloud 共用）
 
-以下步骤适用于：**Playground 测调度树**、**Widget cloud**、**飞书 cloud**（三者都需要云端 Engine 能访问本机双 MCP）。
+| 步骤 | 操作 |
+|------|------|
+| 1–2 | 双隧道（:8002、:8003），复制域名 |
+| 3 | 更新根 `.env` 中 MCP URL 与 `*_TUNNEL_HOST` |
+| 4–5 | 启动双 MCP（须在写 `.env` **之后**） |
+| 6 | `./scripts/deploy_smart_agents.sh`（一次性） |
+| 7 | Playground / Widget / 飞书（按场景） |
 
-**为什么先隧道、后 MCP？**  
-`BILIBILI_TUNNEL_HOST` / `ETSY_TUNNEL_HOST` 在 **MCP 进程启动时**读入并写入 Host 白名单。先开隧道拿到域名、写入 `.env`，再 **第一次** 启动双 MCP，即可带上白名单，**不必先启 MCP 再重启**。  
-（隧道在后端未起时可能返回 502，不影响从 `cloudflared` 输出里复制域名。）
-
-**终端布局（共 6 个，deploy 为一次性）**
-
-| 终端 | 命令 | 说明 |
-|------|------|------|
-| **1** | `./scripts/start_cloudflare_tunnel.sh 8002` | B 站 MCP 隧道；记下 `*.trycloudflare.com` |
-| **2** | `./scripts/start_cloudflare_tunnel.sh 8003` | Etsy MCP 隧道；记下另一域名（**勿与 B 站混用**） |
-| — | 编辑根目录 `.env` | 见下方 env 块 |
-| **3** | `python mcp_server/bilibili_mcp.py --http` | :8002；启动日志应打印隧道 Host 白名单 |
-| **4** | `python mcp_server/etsy_mcp.py --http` | :8003 |
-| **5** | `./scripts/deploy_smart_agents.sh` | 一次性；把 MCP 公网 URL 写入 `smart_agents/.env` 并 deploy |
-| **6** | 仅 Widget / 飞书需要 | Widget：`python local_node/widget_server.py`；飞书：`./scripts/run_feishu_smart_agents.sh`；**Playground 不需要终端 6** |
-
-```bash
-brew install cloudflare/cloudflare/cloudflared   # macOS 首次
-```
-
-**步骤 1–2**：开双隧道，从各自终端输出复制域名。
-
-**步骤 3（写 `.env`）**：
+`.env` 示例：
 
 ```env
 BILIBILI_MCP_SERVER_URL=https://<bilibili-uuid>.trycloudflare.com/mcp
 ETSY_MCP_SERVER_URL=https://<etsy-uuid>.trycloudflare.com/mcp
 BILIBILI_TUNNEL_HOST=<bilibili-uuid>.trycloudflare.com
 ETSY_TUNNEL_HOST=<etsy-uuid>.trycloudflare.com
-SMART_AGENTS_ENGINE_ID=<你的 Engine ID>
+SMART_AGENTS_ENGINE_ID=<engine-id>
 ```
 
-**步骤 4**：在 **已 source `.env` 的 shell** 或确保 `load_dotenv` 能读到上述变量后，启动双 MCP（终端 3–4）。
+单领域云端 deploy：`adk deploy agent_engine bilibili_agent` 或 `etsy_agent`（包名与本地相同），只需对应一侧 MCP + 隧道。
 
-**步骤 5**：`./scripts/deploy_smart_agents.sh`（终端 5，跑完可关）。
+### 4.3 Web Widget
 
-**步骤 6（按场景）**：
-
-| 场景 | 操作 |
-|------|------|
-| Playground | GCP Console → Agent Engine → Playground |
-| Widget cloud | `WIDGET_RUN_MODE=cloud` + 终端 6 起 `widget_server.py` |
-| 飞书 cloud | `FEISHU_RUN_MODE=cloud` + 终端 6 起 `run_feishu_smart_agents.sh` |
-
-**单领域 MCP 云端（仅 B 站或 Etsy 一个包）**：只做对应端口——隧道 **1** 个终端 + MCP **1** 个终端，更新该侧的 `*_MCP_SERVER_URL` / `*_TUNNEL_HOST`，再 deploy 对应单领域包。
-
-**隧道域名变更时**：更新 `.env` → **重启对应 MCP** → **redeploy**（`deploy_smart_agents.sh` 或单领域 `adk deploy`）。
-
-### 4.3 Widget 入口（双模式）
-
-#### A) local 模式（推荐新手，免部署）
+**local（免 deploy）**
 
 - [ ] `WIDGET_RUN_MODE=local`
-- [ ] 双 MCP + `python local_node/widget_server.py`
-- [ ] 浏览器打开 `http://127.0.0.1:8000/`
-- [ ] 验证跨域调度：「先查 B 站粉丝，再导出 Etsy 评论」
+- [ ] 双 MCP + `./scripts/run_widget.sh`
+- [ ] 浏览器 `http://127.0.0.1:8000/`
 
-#### B) cloud 模式（连 Agent Engine）
+**cloud**
 
-**cloud 模式**：推理与编排运行在云端 Agent Engine；RPA 仍在本机（经 MCP + 隧道）。
-
-```
-浏览器 → widget :8000 → Vertex Agent Engine（云端）
-                              ↓ transfer
-                         MCP :8002 / :8003（本机 + 隧道）
-                              ↓
-                         bilibili_tools / etsy_tools
-```
-
-- **纯闲聊 / 路由**：只需 `widget_server.py` + 已 deploy 的 Engine
-- **B 站 / Etsy 任务**：须双 MCP + 双隧道；**不需要** `local_node/server.py`（`:8001`）
-
-- [ ] `WIDGET_RUN_MODE=cloud`
-- [ ] 已完成 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 终端 **1–5**（双隧道 + 双 MCP + deploy）
-- [ ] `SMART_AGENTS_ENGINE_ID` 或 `AGENT_RESOURCE_NAME`
-- [ ] **终端 6**：`python local_node/widget_server.py` → `http://127.0.0.1:8000/`
-
-**常见体感问题**：
-- Session 停在子 Agent 时，下条消息可能仍由专家接手 → 点 **「新会话」**
-- 启动时 `async_get_session HTTP 400` 后自动新建 session：可忽略，用新 session 继续
+- [ ] 完成 §4.2 底座
+- [ ] `WIDGET_RUN_MODE=cloud` + `SMART_AGENTS_ENGINE_ID`
+- [ ] `./scripts/run_widget.sh`
 
 ---
 
-## 5) 飞书接入清单（基于调度树）
+## 5) 飞书接入清单
 
-- [ ] `.env` 配置 `FEISHU_APP_ID` + `FEISHU_APP_SECRET`（或 `FEISHU_APP_TOKEN`）
+- [ ] 根 `.env` 含 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`；`env/local.env` 含 `FEISHU_RUN_MODE=local`
+- [ ] `FEISHU_RUN_MODE=local`（本机）或 `cloud`（已 deploy）
+- [ ] 双 MCP 常开（local 模式）
+- [ ] `./scripts/run_feishu_smart_agents.sh`
+- [ ] 飞书后台长连接事件已保存
+- [ ] 群聊 `@机器人` 或私聊发消息
 
-### 5.1 local 模式（默认，本地 Runner）
-
-- [ ] `FEISHU_RUN_MODE=local`
-- [ ] 双 MCP + `./scripts/run_feishu_smart_agents.sh`
-
-### 5.2 cloud 模式（云端 Agent Runtime）
-
-- [ ] `FEISHU_RUN_MODE=cloud`
-- [ ] 已完成 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 终端 **1–5**
-- [ ] `AGENT_RESOURCE_NAME` 或 `GCP_PROJECT_NUMBER` + `GCP_LOCATION` + `SMART_AGENTS_ENGINE_ID`
-- [ ] **终端 6**：`./scripts/run_feishu_smart_agents.sh`
-
-- [ ] 飞书后台：事件 `im.message.receive_v1`，接收方式 **长连接**
-- [ ] 验证：群聊 `@机器人`；首条「处理中」，长任务会更新进度
-- [ ] 发送 `新对话` / `/新对话`：清空当前群/私聊 Session，**不**删长期记忆
-
-### 5.3 记忆、搜索与身份
+### 记忆与「新对话」
 
 | 能力 | 说明 |
 |------|------|
-| **Session**（短期） | 按 `feishu_{chat}_{user}` 隔离；`新对话` 清空 |
-| **Memory Bank**（长期） | `user_id=feishu_{open_id}`，跨群/私聊共享；**仅小智**读写 |
-| **联网搜索** | 仅小智 `GoogleSearchTool`；新闻/天气等时效问题 |
-| **知识库 RAG** | 仅小智 `rag_search`；文档问答（见 [§10](#10-知识库-rag-poc)） |
-| **cloud Session 映射** | 飞书逻辑 session → Engine 分配 id（`feishu_cloud_sessions.db`） |
-| **Memory 刷写** | Engine `after_agent_callback` + Bridge 侧 `memories.generate` 兜底 |
-| **local 模式** | Session 落 SQLite；Memory 进程内（重启丢失）— 长期记忆请用 **cloud** |
-| **Widget** | 无用户身份，**不使用** Memory Bank |
+| Session | 按群/私聊隔离；发 `新对话` 或 `/新对话` 清空 |
+| Memory Bank | `user_id=feishu_{open_id}`，跨群共享；**仅小智** |
+| cloud 持久记忆 | 需 deploy `--adk_app_object=app` |
 
-### 5.4 防提示词注入（主人忠诚模式）
-
-在 `.env` 增加并重启 Bridge：
+### 主人忠诚护栏（可选）
 
 ```env
-FEISHU_OWNER_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxx
-FEISHU_OWNER_ALIASES=owner_display_name,nickname
+FEISHU_OWNER_OPEN_ID=ou_xxxxxxxx
+FEISHU_OWNER_ALIASES=显示名,昵称
 FEISHU_STRICT_LOYALTY_MODE=true
 ```
 
-生效后：
-- 非主人用户的「改系统提示词/改规则/只听我」类指令会被直接拦截
-- 非主人针对主人别名的辱骂、攻击指令会被直接驳回
-- 主人本人指令不受该拦截影响
-
 ---
 
-## 6) 云端部署清单（可选）
+## 6) 云端部署
 
-部署前：`set -a && source .env && set +a`；按 [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) 跑通双隧道 + 双 MCP，再执行 deploy。
+### 6.1 Engine ID：首次 vs 更新
 
-### 6.1 `--agent_engine_id`：首次 vs 更新
+| 场景 | `--agent_engine_id` |
+|------|---------------------|
+| 首次创建 | **省略** |
+| 更新同一实例 | **必填** |
 
-| 场景 | 是否加 `--agent_engine_id` | 结果 |
-|------|---------------------------|------|
-| **首次部署** | **不要加** | 创建新 Engine；记下输出的 ID |
-| **更新已有 Engine** | **要加** | 覆盖同一实例 |
-
-首次成功后写入 `.env`：
+成功后写入 `.env`：
 
 ```env
-BILIBILI_REST_AGENT_ENGINE_ID=...
-BILIBILI_MCP_AGENT_ENGINE_ID=...
-ETSY_REST_AGENT_ENGINE_ID=...
-ETSY_MCP_AGENT_ENGINE_ID=...
-SMART_AGENTS_ENGINE_ID=...   # 调度树 / Widget cloud / 飞书 cloud
+SMART_AGENTS_ENGINE_ID=...
+# 单域可选：
+# BILIBILI_MCP_AGENT_ENGINE_ID=...  # 若单独 deploy bilibili_agent
+# ETSY_MCP_AGENT_ENGINE_ID=...      # 若单独 deploy etsy_agent
 ```
 
-> 各 Agent 包 **相互独立**，不要混用 Engine ID。
-
-### 6.2 Skill：两条路径
-
-| 路径 | 作用 | 是否 deploy 前置 |
-|------|------|------------------|
-| **A. 打进 Agent 镜像** | `SKILL.md` 随 `adk deploy` 进容器 | ✅ **必须** |
-| **B. GCP Skill Registry** | 云端治理、`retrieve` 检索 | ❌ 可选 |
-
-调度树：[`deploy_smart_agents.sh`](scripts/deploy_smart_agents.sh) 自动 `rsync skills/` → `smart_agents/skills/`。
-
-单领域改 Skill 后：
-
-```bash
-python skill_registry.py validate
-python skill_registry.py update --skill-id bilibili-rpa   # 可选
-cp -R skills/bilibili-rpa/* bilibili_cloud_agent/skills/bilibili-rpa/
-cp -R skills/bilibili-rpa/* bilibili_cloud_agent_mcp/skills/bilibili-rpa/
-# Etsy 同理
-adk deploy agent_engine ...
-```
-
-### 6.3 单领域 Agent 部署
-
-| 包名 | 本地依赖 | `.env` 云端 URL |
-|------|----------|-----------------|
-| `bilibili_cloud_agent` | `server.py` :8001 + 隧道 | `BILIBILI_REST_SERVER_URL` |
-| `bilibili_cloud_agent_mcp` | `bilibili_mcp` :8002 + 隧道 | `BILIBILI_MCP_SERVER_URL` · `BILIBILI_TUNNEL_HOST` |
-| `etsy_cloud_agent` | `server.py` :8001 + 隧道 | `ETSY_REST_SERVER_URL` |
-| `etsy_cloud_agent_mcp` | `etsy_mcp` :8003 + 隧道 | `ETSY_MCP_SERVER_URL` · `ETSY_TUNNEL_HOST` |
-
-```bash
-# 首次（省略 --agent_engine_id）
-adk deploy agent_engine bilibili_cloud_agent \
-  --project=$GCP_PROJECT_ID --region=$GCP_LOCATION \
-  --display_name="Bilibili Cloud REST Agent"
-
-# 更新（加 ID）
-adk deploy agent_engine bilibili_cloud_agent \
-  --project=$GCP_PROJECT_ID --region=$GCP_LOCATION \
-  --display_name="Bilibili Cloud REST Agent" \
-  --agent_engine_id=$BILIBILI_REST_AGENT_ENGINE_ID
-```
-
-其他单领域包同理，见各目录 README。
-
-### 6.4 调度树 `smart_agents` 部署（推荐脚本）
+### 6.2 调度树 deploy（推荐脚本）
 
 ```bash
 ./scripts/deploy_smart_agents.sh
 ```
 
 脚本会：
+
 1. `rsync` `skills/` → `smart_agents/skills/`
-2. 生成 `smart_agents/.env`（MCP 公网 URL + **RAG_*** 等）
-3. `adk deploy ... --adk_app_object=app`（启用 Memory Plugin + Session 压缩）
+2. 生成 `smart_agents/.env`（MCP 公网 URL + RAG）
+3. `adk deploy ... --adk_app_object=app`
 
-**不要**只用仓库根 `--env_file=.env`（云端读不到 MCP / RAG URL）。
+**不要**只用根目录 `--env_file=.env`；云端运行时读 `smart_agents/.env`。
 
-手动等价：
+### 6.3 单领域 deploy
 
 ```bash
-adk deploy agent_engine smart_agents \
+# 首次（省略 agent_engine_id）
+adk deploy agent_engine etsy_agent \
   --project=$GCP_PROJECT_ID --region=$GCP_LOCATION \
-  --display_name="SmartAgents Dispatcher" \
-  --agent_engine_id=$SMART_AGENTS_ENGINE_ID \
-  --adk_app_object=app
+  --display_name="Etsy Agent"
+
+# 更新
+adk deploy agent_engine etsy_agent \
+  --project=$GCP_PROJECT_ID --region=$GCP_LOCATION \
+  --agent_engine_id=$ETSY_MCP_AGENT_ENGINE_ID
 ```
 
-### 6.5 改代码后需要重启什么？
+`bilibili_agent` 同理。云端须能 HTTPS 访问本机 MCP（隧道）。
+
+### 6.4 改代码后重启什么？
 
 | 改动 | 操作 |
 |------|------|
-| `smart_agents/agent.py`、记忆、路由、搜索、RAG | 仅 `./scripts/deploy_smart_agents.sh` |
-| MCP 隧道 URL / `TUNNEL_HOST` | 更新 `.env` → **重启 MCP** → **redeploy** |
-| Feishu Bridge 代码（Session 映射、Memory flush、护栏） | **重启** `run_feishu_smart_agents.sh` |
-| Widget 网关代码 | **重启** `widget_server.py` |
-| 仅 `bilibili_tools` / `etsy_tools` | 重启 MCP，**不必** redeploy Agent |
-| 仅换 `RAG_CORPUS_NAME` / 开关 | 更新根 `.env` → **redeploy**（写入 `smart_agents/.env`） |
+| `domains/*` 工具逻辑 | 重启对应 MCP |
+| `smart_agents/agent.py`、RAG、路由 | `deploy_smart_agents.sh` |
+| MCP 隧道 URL | 更新 `.env` → 重启 MCP → redeploy |
+| 飞书 Bridge | 重启 `run_feishu_smart_agents.sh` |
+| Widget | 重启 `run_widget.sh` |
+| 仅 `skills/*.md` | validate → redeploy |
 
 ---
 
-## 7) 高频故障快速排查
+## 7) 高频故障排查
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| 工具 HTTP 404 | 隧道过期或 MCP 未起 | 本地改 `127.0.0.1` 验证；更新隧道 URL |
-| Agent 说「正在查询」但无工具调用 | 云端连不上 MCP | 检查隧道、`curl` MCP URL；重启 MCP |
-| MCP **421** Invalid Host | `TUNNEL_HOST` 未在 MCP 启动时加载 | 更新 `.env` → **重启 MCP** |
-| 隧道 SSL / control stream 失败 | Clash/VPN fake-ip 或 Quick Tunnel 不稳定 | 关 VPN 或 Named Tunnel |
-| B 站 **503** `LOGIN_STATE_MISSING` | 无登录态 | `python -m bilibili_agent login` |
-| 飞书 cloud **async_create_session 400** | 已修复：逻辑 id 映射 | 更新 Bridge；见 `cloud_session_store.py` |
-| Memory Bank 始终 0 条 | 未 deploy `app` 或未发新消息 | `deploy_smart_agents.sh` + 重启 Bridge + 再聊一轮 |
-| 文档问答不走知识库 / 无 `rag_search` | 未启用或未 redeploy | 检查 `RAG_ENABLED` + `RAG_CORPUS_NAME`；`deploy_smart_agents.sh` |
-| RAG `RAG_QUERY_FAILED` / 跨区失败 | corpus region 与 `RAG_LOCATION` 不一致 | `RAG_LOCATION` 与 corpus 一致（如 `asia-east1`） |
-| Widget 对「你好」答非所问 | Session 停在子 Agent | 点「新会话」或 redeploy 最新交还规则 |
-| `adk run` 无长期记忆 | 预期行为 | 记忆仅在云端 `app` 部署 + 飞书 cloud |
-| 端口冲突 | 进程占用 | `lsof -i :8001` / `:8002` / `:8003` → `kill` |
+| `adk run` 启动即报 MCP 不可达 | MCP 未起 | 先 `python mcp_server/*_mcp.py --http` |
+| 工具调用 404 / 超时 | MCP 挂了或 URL 错 | `curl` MCP URL；检查 env |
+| MCP **421** Invalid Host | 隧道 Host 未进白名单 | 更新 `*_TUNNEL_HOST` 后 **重启 MCP** |
+| B 站 503 `LOGIN_STATE_MISSING` | 未登录 | `python -m bilibili_agent login` |
+| 飞书 `app_id is invalid` | 根 `.env` 仍是占位符 | 填真实飞书凭证 |
+| 飞书仍像旧「评论专家」 | `FEISHU_RUN_MODE=cloud` 连旧 Engine | 改 `local` 或 redeploy 最新 `smart_agents` |
+| Token 溢出 400（飞书 local） | Session 历史过大 | 默认 Session guard 已开；发「新对话」或调低 `FEISHU_LOCAL_SESSION_MAX_*` |
+| Memory 始终为空 | 未 deploy `app` | `deploy_smart_agents.sh` + 飞书 cloud |
+| TSE 反问「日报在哪」 | 未用确定性工具 | `GCP_DATA_MCP_ENABLED=true`；应走 `list_tse_tool_catalog` |
+| 图表假 Sales01 数据 | 手写 `run_code` | 必须用 `render_tse_customer_sales_chart` |
+| RAG 不生效 | 未 redeploy | 检查 `RAG_*` 是否在 `smart_agents/.env` |
+| 端口占用 | 旧进程 | `lsof -i :8002` / `:8003` / `:8000` |
 
 ```bash
-# 快速端口检查
-lsof -i :8001 && lsof -i :8002 && lsof -i :8003
+lsof -i :8002 && lsof -i :8003
+python scripts/check_runtime_env.py --mode smart_agents
 ```
 
 ---
 
-## 8) 建议新手的最短路径
+## 8) 新手最短路径（约 30 分钟）
 
-> 每一步的依赖与凭证见 [§0](#0-开发者本地部署前置条件总览)。
-
-1. 完成 §0.2–§0.3（venv、`requirements.txt`、`gcloud` ADC）
-2. B 站进程内：`python -m bilibili_agent login` → `./scripts/run_adk_bilibili_agent.sh`
-3. Etsy 进程内：§0.5 凭证 → `./scripts/run_adk_etsy_agent.sh`
-4. 调度树本地：双 MCP + `./scripts/run_adk_smart_agents.sh`（**无需** cloudflared）
-5. Widget 本地：`widget_server.py` + 浏览器 `:8000`
-6. 飞书 local：§0.7 + 双 MCP → `./scripts/run_feishu_smart_agents.sh`
-7. 云端：§0.6 隧道 + [§4.2](#42-云端调度树底座playground--widget-cloud--飞书-cloud-共用) deploy + Playground
-8. （可选）RAG：见 [§10](#10-知识库-rag-poc)，先起 corpus 再 redeploy
+1. §0.2–0.3：venv、`pip install`、`gcloud auth`
+2. `cp .env.example .env` + `cp env/local.env.example env/local.env`，填 `.env`
+3. 只玩调度树：双 MCP + `run_adk_smart_agents.sh`，对小智说「你好」
+4. 玩 B 站：`bilibili_agent login` + 双 MCP 之一 + `run_adk_bilibili_agent.sh`
+5. 玩 Etsy：配 Etsy 凭证 + `run_adk_etsy_agent.sh`
+6. 飞书：§0.7 + `run_feishu_smart_agents.sh`
+7. 云端：§0.6 隧道 + §4.2 deploy
+8. （可选）RAG：§10 · TSE 数据：§11 · Code Execution：§12
 
 ---
 
-## 9) Cursor IDE（stdio MCP）
+## 9) L1 工具直测（不经 Agent）
 
-无需启动 HTTP 服务或隧道；Cursor 以 **stdio** 拉起 `bilibili_mcp.py`。
-
-- [ ] 配置见 [`.cursor/README.md`](.cursor/README.md)（`mcp.json`）
-- [ ] `python -m bilibili_agent login` + 桌面 `Up主名称.xlsx`
-- [ ] 在 Cursor Agent 对话中直接描述任务
-
-与云端路径区别：Cursor 用 stdio；Agent Engine / 调度树用 `--http` + MCP URL。
+```bash
+python scripts/test_p0_local.py                              # B 站
+python scripts/test_etsy_local.py --check-credentials        # Etsy 凭证
+python scripts/test_etsy_listing_assets_local.py             # Etsy 生图链路（按需）
+```
 
 ---
 
-## 10) 知识库 RAG（PoC）
+## 10) 知识库 RAG（可选）
 
-把手册 / PDF 导入 **Agent Platform → RAG Engine**，再挂到调度员**小智**的 `rag_search`。  
-**与 Memory Bank 分工**：Memory 记「这个人」的偏好；RAG 记「团队文档」知识。
+小智专用 `rag_search`，与 Memory Bank 分工：Memory 记「这个人」，RAG 记「团队文档」。
 
-### 10.1 平台侧建 corpus
-
-1. Agent Platform → **RAG Engine** → Create corpus  
-2. Region：优先与 Agent Engine 同区（`us-central1`）。若 Spanner mode 报白名单限制，可改用 **Serverless**，或换可用区（本 PoC 曾用 `asia-east1`）  
-3. Embedding：`Text Multilingual Embedding 002`（中文稳）  
-4. Vector DB：托管 Spanner / Serverless 均可（受区域白名单约束）  
-5. Chunk 建议 PoC：`size≈800`、`overlap≈160`；布局解析先用 Default  
-6. **Import data**（GCS / 本地 / Drive）：等 Data 页全部 **Imported**（创建成功 ≠ 已入库）  
-7. 复制 Details 中的完整 resource name：  
-   `projects/<project>/locations/<loc>/ragCorpora/<id>`
-
-> **RAG Engine vs Vector Search**：前者是托管「文档→切分→embedding→检索」应用层；后者是底层向量库（自备 embedding）。杂乱 PDF 开箱路线优先 RAG Engine。
-
-### 10.2 根目录 `.env`
+1. Agent Platform → **RAG Engine** → 建 corpus → Import 文档 → 等 `Imported`
+2. 根 `.env`：
 
 ```env
 RAG_ENABLED=true
 RAG_CORPUS_NAME=projects/<project>/locations/<loc>/ragCorpora/<id>
-RAG_LOCATION=<loc>          # 必须与 corpus 同 region
-# RAG_PROJECT_ID=           # 可选，默认 GCP_PROJECT_ID
+RAG_LOCATION=<loc>
 ```
 
-### 10.3 部署与验证
+3. `./scripts/deploy_smart_agents.sh`
+4. 问：「Gemini Enterprise 权限怎么配？」
+
+本地 smoke：
 
 ```bash
-./scripts/deploy_smart_agents.sh   # 把 RAG_* 写入 smart_agents/.env
+RAG_ENABLED=true RAG_CORPUS_NAME='projects/...' RAG_LOCATION=asia-east1 \
+  python -c "from smart_agents.rag_tools import rag_search; print(rag_search('权限', 3))"
 ```
 
-飞书 / Playground 问文档内问题（示例）：
+---
 
-- 「Gemini Enterprise 权限怎么配？」
-- 「Vertex AI API 接入要注意什么？」
-- 「DSQ / 429 怎么缓解？」
+## 11) TSE Smart Workspace 数据（可选）
 
-本地 smoke（无需 deploy）：
+小智通过 **GCP 数据 MCP + 确定性工具** 查询 TSE Firestore（**只读**），不经过阿B/E姐。
+
+### 11.1 开启
+
+根 `.env`：
+
+```env
+GCP_DATA_MCP_ENABLED=true
+TSE_FIRESTORE_PROJECT_ID=your-gcp-project
+TSE_FIRESTORE_DATABASE=tse-jayson-database
+```
+
+需 ADC：`gcloud auth application-default login`  
+IAM 建议：`roles/mcp.toolUser`、`dataplex.catalogViewer`、`roles/datastore.viewer`（只读）
+
+### 11.2 三层能力
+
+| 层 | 说明 |
+|----|------|
+| `kc_*` | Knowledge Catalog 元数据（Glossary 补充） |
+| `fs_*` | Firestore MCP **只读**（get/list） |
+| `list_tse_*` / `get_tse_*` | 17 个场景工具（见 `smart_agents/tse_tools.py`） |
+
+**原则**：先 `list_tse_tool_catalog`，再调场景工具；禁止让用户解释「日报存在哪」。
+
+### 11.3 常用话术
+
+| 用户问 | 工具 |
+|--------|------|
+| TSE 有多少用户/客户 | `get_tse_overview` |
+| 某时间段日报并提炼 | `query_tse_daily_reports_by_date(date_from, date_to, …)` |
+| 某销售的客户 + 日报 | `get_tse_sales_customer_reports(sales_name=...)` |
+| 客户分布统计/图 | `get_tse_customer_sales_stats` · `render_tse_customer_sales_chart` |
+| 待我审批的分享 | `list_tse_pending_shares(recipient_email=...)` |
+| 字段什么意思 | `lookup_tse_schema` |
+
+Knowledge Catalog 配置参见 [Agent Platform 学习指南](docs/agent_platform_learning_guide.md)。  
+架构导读：[`docs/agent_platform_learning_guide.md`](docs/agent_platform_learning_guide.md) §7。
+
+本地验证（无需飞书）：
 
 ```bash
-RAG_ENABLED=true \
-RAG_CORPUS_NAME='projects/.../ragCorpora/...' \
-RAG_LOCATION=asia-east1 \
-python -c "from smart_agents.rag_tools import rag_search; print(rag_search('权限配置', 3))"
+./scripts/run_adk_smart_agents.sh
+# 或仅测工具：
+python -c "from smart_agents.tse_tools import get_tse_overview; print(get_tse_overview())"
 ```
 
-### 10.4 能力边界
+改 TSE 工具后 **重启** `run_feishu_smart_agents.sh` 或 `run_adk_smart_agents.sh`。
 
-| 问题类型 | 小智行为 |
-|----------|----------|
-| 内部 PDF / 手册 | `rag_search` |
-| 新闻 / 天气等时效 | `google_search` |
-| 称呼 / 偏好 | Memory Bank |
-| B 站 / Etsy RPA | transfer 专家（不用 RAG） |
+---
 
-代码：[`smart_agents/rag_tools.py`](smart_agents/rag_tools.py) · 挂载：[`smart_agents/agent.py`](smart_agents/agent.py)。
+## 12) Code Execution（可选）
+
+小智在 **Vertex Agent Engine Sandbox** 中跑 Python（统计、matplotlib 作图）。
+
+```env
+CODE_EXECUTION_ENABLED=true
+CODE_EXEC_LOCATION=us-central1
+# 默认复用 SMART_AGENTS_ENGINE_ID
+```
+
+| 场景 | 工具 |
+|------|------|
+| 通用分析 | `run_code` + 可选 `stage_data_file` |
+| TSE 客户分布图 | **`render_tse_customer_sales_chart`**（内嵌真实 Firestore 统计，禁止手写示例数据） |
+
+- 首次沙箱创建约 1–2 分钟
+- 产出 **Artifact**；飞书自动附图（`integrations/feishu/media_delivery.py`）
+- TSE 分布图 **不要** 用虚构 `Sales01` 数据直接 `run_code`
 
 ---
 
@@ -692,9 +538,11 @@ python -c "from smart_agents.rag_tools import rag_search; print(rag_search('权�
 
 | 文档 | 内容 |
 |------|------|
-| [`README.md`](README.md) | 架构总览、模块地图 |
-| [`docs/adk_learning_guide.md`](docs/adk_learning_guide.md) | ADK 概念、多 Agent、Memory、RAG、部署全景 |
-| [`mcp_server/README.md`](mcp_server/README.md) | MCP、隧道 |
-| [`skills/README.md`](skills/README.md) | Skill Registry CLI |
-| [`smart_agents/README.md`](smart_agents/README.md) | 调度树、记忆、RAG |
-| [`integrations/feishu/README.md`](integrations/feishu/README.md) | 飞书环境变量、护栏、Bridge |
+| [`README.md`](README.md) | 架构总览 |
+| [`docs/domains_architecture.md`](docs/domains_architecture.md) | domains 与扩展 |
+| [`docs/agent_platform_learning_guide.md`](docs/agent_platform_learning_guide.md) | Agent Platform 组件导读 |
+| [`KC-checklist.md`](KC-checklist.md) | TSE Glossary / Firestore schema |
+| [`mcp_server/README.md`](mcp_server/README.md) | MCP 细节 |
+| [`smart_agents/README.md`](smart_agents/README.md) | 调度树能力 |
+| [`integrations/feishu/README.md`](integrations/feishu/README.md) | 飞书变量与护栏 |
+| [`skills/README.md`](skills/README.md) | Skill Registry |

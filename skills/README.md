@@ -1,161 +1,107 @@
-# skills — Skill 资产（SOP 源文件）
+# skills — Skill 资产（工作流 SOP）
 
-存放 **Agent Skills 规范** 下的技能包，描述「如何用工具完成 B 站 RPA 任务」，不包含可执行代码。
+存放 **Agent Skills** 规范下的技能包：描述「先做什么、再调哪些工具」，**不包含可执行代码**。
 
-- **执行能力**在 [`bilibili_agent/bilibili_tools.py`](../bilibili_agent/bilibili_tools.py) + [`mcp_server/`](../mcp_server/) / [`local_node/`](../local_node/)
-- **云端注册**用根目录 [`skill_registry.py`](../skill_registry.py)
-
----
-
-## Skill Registry 与 Agent Registry
-
-| | Skill Registry | Agent Registry (MCP) |
-|---|----------------|----------------------|
-| 存什么 | 工作流说明、编排知识（`SKILL.md` + 资源） | 可执行工具端点（MCP URL + toolspec） |
-| 作用 | 教 Agent **怎么做** | 提供 Agent **调什么** |
-| 本项目 | `skill_registry.py` 上传 | GCP 控制台注册 MCP Server |
-
-两者配合：Skill 提供 SOP，MCP/REST 提供执行能力。
+执行能力在 `domains/` + `mcp_server/`；Skill 教 Agent **如何编排**。
 
 ---
 
-## 目录结构
+## 目录
 
 ```
 skills/
-├── README.md              ← 本文件
-├── bilibili-rpa/          ← B 站 Skill（skill_id = bilibili-rpa）
-│   ├── SKILL.md
-│   └── references/
-└── etsy-review/           ← Etsy Skill（skill_id = etsy-review）
-    ├── SKILL.md
-    └── references/
+├── bilibili-trend/         B 站全站热门选品（内部运营）
+├── etsy-review/            Etsy 评论导出
+├── etsy-listing-assets/    Etsy 换场景生图、预设
+└── feishu-ops/             飞书出站：日历 / IM / Docs / Sheets（lark-cli Bot）
 ```
 
-部署包内有一份副本：
-
-- 单领域：`bilibili_cloud_agent*/skills/`、`etsy_cloud_agent*/skills/`
-- 调度树：`smart_agents/skills/`（[`deploy_smart_agents.sh`](../scripts/deploy_smart_agents.sh) 自动 rsync）
-
-**维护规则**：改 `skills/` 后：
-
-```bash
-python skill_registry.py validate && python skill_registry.py update   # 可选：GCP Registry
-# 单领域：cp 到对应 cloud_agent*/skills/
-# 调度树：./scripts/deploy_smart_agents.sh（自动 rsync）
-```
+每个 Skill 含 `SKILL.md` 与 `references/tools.md`（工具契约）。
 
 ---
 
-## SKILL.md 与实现的关系
+## Skill 与 MCP 的关系
 
-Skill 是 **编排文档**，必须和工具契约一致：
+| 组件 | 作用 |
+|------|------|
+| **Skill**（`SKILL.md`） | 工作流步骤、异常策略、报告格式 |
+| **MCP**（Cloud Run / `:8002`–`:8004`） | 实际执行领域工具（飞书经 `lark-cli`） |
+| **SkillToolset** | `load_skill` 把 SOP 注入上下文 |
+| **McpToolset** | 调用远程工具 |
 
-| Skill 可以写 | Skill 不能写（除非先改代码） |
-|-------------|---------------------------|
-| 步骤顺序、异常策略、报告格式 | 任意 Excel 文件名（当前无参数） |
-| 单个 UP 主跳过读名单 | 导出到其他系统（无对应 tool） |
-| 只查不写（不调 write） | 超出 `adk_additional_tools` 的能力 |
-
-**规范要点**：
-
-- frontmatter `name` **必须**与目录名相同（`bilibili-rpa`）
-- `name` 仅允许小写字母、数字、连字符
-- `metadata.adk_additional_tools` 列出关联工具名，供 ADK `SkillToolset` 动态启用
-
-详见 [`bilibili-rpa/SKILL.md`](bilibili-rpa/SKILL.md)。
+Agent instruction 普遍要求：**领域任务前先 `load_skill`，再按 SOP 调 MCP 工具**。
 
 ---
 
-## skill_registry.py（云端治理 CLI）
+## 谁在使用
 
-| 命令 | 作用 | 操作对象 |
-|------|------|----------|
-| `validate` | 校验本地包 | 本地 `skills/` |
-| `create` / `update` | 上传 GCP | 本地 → 云端 Registry |
-| `list` / `get` / `retrieve` | 查询 | **云端** Registry |
-| `delete` | 删除 | 云端 |
+| Skill | 挂载的 Agent |
+|-------|----------------|
+| `bilibili-trend` | 调度树阿B |
+| `etsy-review` | 调度树 E姐 |
+| `etsy-listing-assets` | 调度树 E姐 |
+| `feishu-ops` | 调度树小飞 |
+
+构建逻辑：[`domains/bilibili/builder.py`](../domains/bilibili/builder.py)、[`domains/etsy/builder.py`](../domains/etsy/builder.py)、[`domains/feishu/builder.py`](../domains/feishu/builder.py)。  
+Skill 路径解析：[`domains/shared/skill_resolver.py`](../domains/shared/skill_resolver.py)（优先 `skills/<id>/`）。
+
+---
+
+## 维护流程
+
+1. 编辑 `skills/<skill-id>/SKILL.md`
+2. 校验：
 
 ```bash
-# 全局参数写在子命令之前
 python skill_registry.py validate
-python skill_registry.py create
-python skill_registry.py list
-python skill_registry.py --skill-id bilibili-rpa get
-python skill_registry.py retrieve --query "bilibili 粉丝"
+```
+
+3. （可选）上传 GCP Skill Registry：
+
+```bash
 python skill_registry.py update --skill-id bilibili-rpa
 ```
 
-GCP 控制台**暂无** Skill Registry UI，`list` 即云端清单。
-
-云端资源名：
-
-```
-projects/<GCP_PROJECT_ID>/locations/<GCP_LOCATION>/skills/bilibili-rpa
-```
-
-### 环境要求
-
-```bash
-source .venvAgents/bin/activate
-pip install "google-cloud-aiplatform>=1.154.0" python-dotenv
-gcloud auth application-default login
-gcloud config set project $GCP_PROJECT_ID
-```
-
-IAM：`roles/aiplatform.user`（写操作需写权限）。可用区域：`us-central1`、`europe-west4`、`us-east5`。
-
-### 环境变量（`.env`）
-
-```env
-GCP_PROJECT_ID=<your-gcp-project-id>
-GCP_LOCATION=us-central1
-SKILL_ID=bilibili-rpa
-SKILL_DIR=skills/bilibili-rpa
-SKILL_DISPLAY_NAME=Bilibili RPA Skill
-```
-
-命令行 `--project`、`--location`、`--skill-id` 等可覆盖默认值。
+4. **调度树云端**：`./scripts/deploy_smart_agents.sh` 会 `rsync` 到 `smart_agents/skills/`
+5. 若改了 `metadata.adk_additional_tools` 或 instruction 引用 → redeploy Agent
 
 ---
 
-## 谁在使用这个 Skill
+## SKILL.md 规范要点
 
-### bilibili-rpa
+- frontmatter `name` **必须**与目录名一致（如 `bilibili-rpa`）
+- `name` 仅小写字母、数字、连字符
+- `metadata.adk_additional_tools` 列出关联 MCP 工具名
 
-| 消费者 | 是否 attach |
-|--------|-------------|
-| `bilibili_agent`（进程内） | ✅ |
-| `bilibili_cloud_agent` / `bilibili_cloud_agent_mcp` | ✅ |
-| Cursor MCP | ❌ 直接调 tool |
+示例：[`bilibili-rpa/SKILL.md`](bilibili-rpa/SKILL.md)。
 
-### etsy-review
+---
 
-| 消费者 | 是否 attach |
-|--------|-------------|
-| `etsy_agent`（进程内） | ✅ |
-| `etsy_cloud_agent` / `etsy_cloud_agent_mcp` | ✅ |
-| `smart_agents`（E姐 / 阿B 经子 Agent） | ✅（`smart_agents/skills/`，deploy 脚本 rsync） |
+## skill_registry.py（GCP 治理 CLI）
 
-Agent 指令要求：处理 B 站 RPA 前先 `load_skill('bilibili-rpa')`，再按 SOP 调用 REST/MCP 工具。
-
-**重新部署**（修改 agent 或 skill 包后）：
+| 命令 | 作用 |
+|------|------|
+| `validate` | 校验本地包 |
+| `create` / `update` | 上传到 GCP Skill Registry |
+| `list` / `get` / `retrieve` | 查询云端 |
 
 ```bash
-cp -R skills/bilibili-rpa/* bilibili_cloud_agent/skills/bilibili-rpa/
-cp -R skills/bilibili-rpa/* bilibili_cloud_agent_mcp/skills/bilibili-rpa/
-python skill_registry.py update   # 可选
-
-adk deploy agent_engine bilibili_cloud_agent \
-  --project=$GCP_PROJECT_ID --region=$GCP_LOCATION \
-  --display_name="Bilibili-Cloud-Agent" \
-  --agent_engine_id=$BILIBILI_REST_AGENT_ENGINE_ID
-
-adk deploy agent_engine bilibili_cloud_agent_mcp \
-  --project=$GCP_PROJECT_ID --region=$GCP_LOCATION \
-  --display_name="Bilibili Cloud MCP Agent" \
-  --agent_engine_id=$BILIBILI_MCP_AGENT_ENGINE_ID
+python skill_registry.py validate
+python skill_registry.py list
+python skill_registry.py retrieve --query "etsy 评论"
 ```
+
+环境：`GCP_PROJECT_ID`、`GCP_LOCATION`、ADC 已登录。  
+Registry **可选**；本地 `adk run` 直接读 `skills/` 目录即可。
+
+---
+
+## 加新 Skill
+
+1. 新建 `skills/<skill-id>/SKILL.md` + `references/`
+2. 在 `domains/<domain>/manifest.yaml` 的 `skills` 列表加入 id
+3. 在对应 `builder.py` 的 `_skill_toolset()` 会随 `SKILL_IDS` 自动加载
+4. `validate` → deploy / rsync
 
 ---
 
@@ -163,25 +109,15 @@ adk deploy agent_engine bilibili_cloud_agent_mcp \
 
 | 现象 | 处理 |
 |------|------|
-| `Permission denied` / 403 | 确认 `roles/aiplatform.user` 且已 `gcloud auth application-default login` |
-| `Skill name does not match directory name` | frontmatter `name:` 改为 `bilibili-rpa` |
-| `skill_id` 格式错误 | 小写连字符；不能以 `gcp-` 开头 |
-| 删除后 24h 内无法复用同一 ID | GCP 限制，等待或换新 ID |
-| `create` / `update` 长时间等待 | LRO 操作，默认 `wait_for_completion=True` |
+| `未找到 Skill` | 确认 `skills/<id>/SKILL.md` 存在 |
+| `name does not match directory` | 改 frontmatter `name` |
+| Agent 不调某工具 | 检查 `adk_additional_tools` 与 MCP `tool_filter` |
 
 ---
 
-## 升级改造
+## 相关文档
 
-1. 编辑 `skills/bilibili-rpa/SKILL.md`
-2. `python skill_registry.py validate && python skill_registry.py update`
-3. 同步到 `bilibili_cloud_agent*/skills/` 并 redeploy（若 instruction 或 `additional_tools` 有变）
-
----
-
-## 参考链接
-
-- [创建和管理技能（GCP）](https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/skill-registry/create-manage?hl=zh-cn)
-- [ADK Skill Registry 集成](https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/skill-registry/adk-integration?hl=zh-cn)
-- 操作手册：[`../user_guide.md`](../user_guide.md)
-- ADK 概念：[`../docs/adk_learning_guide.md`](../docs/adk_learning_guide.md)
+- [`../docs/domains_architecture.md`](../docs/domains_architecture.md)
+- [`../user_guide.md`](../user_guide.md)
+- [ADK Skill Registry 集成](https://cloud.google.com/gemini-enterprise/docs/skill-registry/adk-integration)
+- [`../docs/agent_platform_learning_guide.md`](../docs/agent_platform_learning_guide.md)

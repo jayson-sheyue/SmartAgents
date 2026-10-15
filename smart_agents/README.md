@@ -1,144 +1,202 @@
-# SmartAgents — 调度树（Dispatcher + 双 MCP 子 Agent）
+# SmartAgents — 调度树（Dispatcher + 三 MCP 子 Agent）
 
-**Dispatcher 调度树**：根 Agent（小智）负责接待、知识库与记忆，并路由到 B 站专家（阿B）与 Etsy 专家（E姐）；RPA 执行在本机 MCP。
+根 Agent **小智**负责接待、记忆、搜索、RAG、**TSE 数据**、**Code Execution**、**Task Card**，通过 `transfer_to_agent` 把 B 站 / Etsy / 飞书出站交给 **阿B**、**E姐**、**小飞**。
+
+生产里用户从 **TSE Smart Workspace** 侧栏进来（工作台同域 API → Agent Engine），不是本机 Widget。复合任务的可交付物写在 Session Task Card（`task_card.py`）；工作台 `smart_agents_runtime` 按 card 自动续跑。
+
+---
 
 ## 架构
 
 ```
 SmartAgents_Dispatcher（小智）
-  ├─ tools: GoogleSearch · Memory · rag_search（可选）
-  ├─ Bilibili_Cloud_MCP_Agent   → BILIBILI_MCP_SERVER_URL (:8002)
-  └─ Etsy_Cloud_MCP_Agent       → ETSY_MCP_SERVER_URL (:8003)
+  ├─ GoogleSearch · PreloadMemory · LoadMemory
+  ├─ rag_search（可选）
+  ├─ run_code · stage_data_file（可选，Code Execution）
+  ├─ build_tse_tools() × 18（可选，GCP_DATA_MCP_ENABLED）
+  ├─ kc_* · fs_* Remote MCP（可选，fs 只读）
+  ├─ Bilibili_Cloud_MCP_Agent   → Cloud Run / :8002
+  ├─ Etsy_Cloud_MCP_Agent       → Cloud Run / :8003
+  └─ Feishu_Cloud_MCP_Agent     → Cloud Run / :8004（lark-cli Bot）
 ```
 
-- 路由：`transfer_to_agent`（子 Agent **禁止** peer 互转，跨域须回调度器）
-- 共享构建器：[`bilibili_mcp_sub.py`](bilibili_mcp_sub.py) · [`etsy_mcp_sub.py`](etsy_mcp_sub.py)
-- Vertex / 代理：[`vertex.py`](vertex.py)
-- **仅小智**：Memory（`PreloadMemoryTool` / `LoadMemoryTool` + callback / plugin）、联网搜索、**知识库 RAG**（[`rag_tools.py`](rag_tools.py)）
-- Session 压缩：[`app_factory.py`](app_factory.py)（`EventsCompactionConfig`）
-- 单领域 MCP 包与调度树 **共用** 上述 sub builder
+- 子 Agent：[`domains/bilibili/builder.py`](../domains/bilibili/builder.py) · [`domains/etsy/builder.py`](../domains/etsy/builder.py) · [`domains/feishu/builder.py`](../domains/feishu/builder.py)（`standalone=False`）
+- 子 Agent **禁止** peer 互转
+- 代码：[`agent.py`](agent.py) · App：[`app_factory.py`](app_factory.py)
+- 飞书 **入站** bridge 见 [`integrations/feishu`](../integrations/feishu/README.md)；与小飞出站正交
 
-### 记忆与用户隔离（单 Agent Runtime）
+---
 
-| 入口 | `user_id` | `session_id` | Memory Bank |
-|------|-----------|--------------|-------------|
-| 飞书 | `feishu_{open_id}`（跨群共享长期记忆） | `feishu_{chat}_{user}`（每群独立短期上下文） | 小智 only；**cloud** 模式持久化 |
-| Widget | `web_{随机}`（匿名 tab） | 每 tab 独立 | **关闭** |
-| GE App（预留） | `google_{sub}` | 按产品定 | 小智 only |
+## 能力矩阵
 
-飞书发送 **`新对话`** 或 **`/新对话`**：仅清空当前群/私聊 Session，**不**删除 Memory Bank。
+| 能力 | 小智 | 阿B / E姐 / 小飞 |
+|------|:----:|:----------------:|
+| Session（短期） | ✅ | ✅ |
+| Memory Bank | ✅ | ❌ |
+| `google_search` | ✅ | ❌ |
+| `rag_search` | ✅（`RAG_ENABLED`） | ❌ |
+| TSE 确定性工具 | ✅（`GCP_DATA_MCP_ENABLED`） | ❌ |
+| Code Execution / 作图 | ✅（`CODE_EXECUTION_ENABLED`） | ❌ |
+| MCP 领域工具 | 经 transfer | ✅ |
 
-### 知识库 RAG（PoC）
+---
 
-平台侧在 **Agent Platform → RAG Engine** 建 corpus 并 Import 文档（Status=`Imported`），再配置：
+## TSE 数据（可选）
+
+开关：`GCP_DATA_MCP_ENABLED=true`（或分别开 Firestore/KC）；API：`TSE_API_BASE_URL` + 会话 Key。  
+路径约定见 [`docs/tse_data_access.md`](../docs/tse_data_access.md)（**Lab-00**：`API/工具 > Firestore MCP > KC`）。
+
+| 模块 | 路径 | 说明 |
+|------|------|------|
+| 场景工具 | `tse_tools.py` | P0 业务界面；有 Key 时 list/get 优先 External API |
+| API 客户端 | `tse_api_client.py` | `/api/external/v1/*` |
+| 存储层 | `tse_store.py` | Firestore MCP 封装（P1 兜底） |
+| Remote MCP | `gcp_data_mcp.py` | `fs_*` 兜底 / `kc_*` 可选元数据 |
+
+**入口**：用户问 TSE → 先 `list_tse_tool_catalog` → 调对应 `get_tse_*` / `list_tse_*`。  
+Glossary：[`KC-checklist.md`](../KC-checklist.md)
+
+常用工具：
+
+- `get_tse_overview` — 用户/客户总览（Firestore）
+- `list_tse_customers` / `get_tse_customer` — 有 Key 优先 API
+- `query_tse_daily_reports_by_date` — 按时间段查日报（跨客户）
+- `search_tse_daily_reports` — 关键词证据检索
+- `set_tse_session_api_key` / `ask_tse_workspace` / `generate_tse_global_report` — 会话 Key + API
+- `map_tse_daily_reports_to_bitable` — 映射多维表格 records
+- `get_tse_customer_sales_stats` / `render_tse_customer_sales_chart` — 统计与分布图
+
+---
+
+## Code Execution（可选）
 
 ```env
-RAG_ENABLED=true
-RAG_CORPUS_NAME=projects/<project>/locations/<loc>/ragCorpora/<id>
-RAG_LOCATION=<loc>    # 与 corpus 同 region（如 asia-east1）
+CODE_EXECUTION_ENABLED=true
+CODE_EXEC_LOCATION=us-central1
 ```
 
-| 能力 | 工具 | 用途 |
-|------|------|------|
-| 文档知识 | `rag_search` | 手册 / PDF / FAQ |
-| 时效事实 | `google_search` | 新闻、天气等 |
-| 用户偏好 | Memory Bank | 称呼、习惯 |
-| 领域 RPA | transfer | B 站 / Etsy |
+- `run_code` / `stage_data_file` — 沙箱 Python
+- `render_tse_customer_sales_chart` — TSE 分布图（**禁止**手写示例数据）
+- 产物 → Session Artifact → 飞书 [`media_delivery.py`](../integrations/feishu/media_delivery.py)
 
-改完后执行 `./scripts/deploy_smart_agents.sh`（会把 `RAG_*` 写入 `smart_agents/.env`）。  
-操作细则：[`../user_guide.md`](../user_guide.md) §10。
+---
 
-本地 smoke：
+## 本地运行
 
 ```bash
-RAG_ENABLED=true \
-RAG_CORPUS_NAME='projects/.../ragCorpora/...' \
-RAG_LOCATION=asia-east1 \
-python -c "from smart_agents.rag_tools import rag_search; print(rag_search('权限配置', 3))"
-```
-
-## 本地测试（整棵树）
-
-### 1. 双 MCP
-
-```bash
-# 终端 1
+# 终端 1–3：三 MCP（飞书需本机 lark-cli + FEISHU_APP_*）
 python mcp_server/bilibili_mcp.py --http
-
-# 终端 2
 python mcp_server/etsy_mcp.py --http
-```
+python mcp_server/feishu_mcp.py --http
 
-### 2. 调度 Agent
-
-```bash
+# 终端 4
+cp env/local.env.example env/local.env   # 首次
 ./scripts/run_adk_smart_agents.sh
 ```
 
-等价：
+对话示例：
 
-```bash
-export BILIBILI_MCP_SERVER_URL=http://127.0.0.1:8002/mcp
-export ETSY_MCP_SERVER_URL=http://127.0.0.1:8003/mcp
-export PYTHONPATH=.
-adk run smart_agents
+- 「抓 B 站全站热门」→ 阿B
+- 「导出 Etsy listing 评论」→ E姐
+- 「查今天飞书日历」→ 小飞
+- 「把本月需跟进的客户写入这个多维表格」→ Task Card `bitable_with_rows` → 小智拉日报 + 小飞写入
+- 「你好」→ 小智
+- 「Gemini 权限怎么配？」→ 小智 `search_tse_knowledge` / `rag_search`
+- 「梁伶飞客户 + 随机日报」→ 小智 `get_tse_sales_customer_reports`
+
+---
+
+## 记忆与用户隔离
+
+| 入口 | `user_id` | Memory Bank |
+|------|-----------|-------------|
+| TSE 工作台侧栏 | 登录邮箱 | 小智；cloud + deploy `app` 持久 |
+| 飞书入站 | `feishu_{open_id}` | 小智；cloud + deploy `app` 持久 |
+| Widget | `web_{uuid}` | 匿名，不持久 |
+| `adk run` | CLI 默认 | 无 Plugin |
+
+飞书 **`新对话`**：清 Session，不删 Memory。  
+飞书 local **Session guard**：`FEISHU_LOCAL_SESSION_GUARD_ENABLED`（防 token 溢出）。
+
+---
+
+## 知识库 RAG（可选）
+
+```env
+RAG_ENABLED=true
+RAG_CORPUS_NAME=projects/.../ragCorpora/...
+RAG_LOCATION=asia-east1
 ```
 
-> `adk run` 加载 `root_agent`，不含 Memory Plugin / 事件压缩；RAG 工具只要环境变量齐全即可本地调用。
+细则：[`user_guide.md`](../user_guide.md) §10。
 
-### 3. 对话示例
+---
 
-- B 站：`帮我查 Excel 里所有 UP 主的粉丝数`
-- Etsy：`导出 listing 12345678 的评论`
-- 闲聊：`你好，你能做什么？`（小智直接答，不 transfer）
-- 知识库：`Gemini Enterprise 权限怎么配？`（`rag_search`）
-
-## 单独测试子 Agent（不经过调度）
-
-| 子 Agent | 脚本 | 说明 |
-|----------|------|------|
-| 阿B（B 站 MCP） | `./scripts/run_adk_bilibili_cloud_agent_mcp.sh` | 同 [`bilibili_cloud_agent_mcp`](../bilibili_cloud_agent_mcp/) |
-| E姐（Etsy MCP） | `./scripts/run_adk_etsy_cloud_agent_mcp.sh` | 同 [`etsy_cloud_agent_mcp`](../etsy_cloud_agent_mcp/) |
-
-## 飞书入口
+## 飞书 / Widget
 
 ```bash
 ./scripts/run_feishu_smart_agents.sh
+./scripts/run_widget.sh                # :8000
 ```
 
-见 [`integrations/feishu/README.md`](../integrations/feishu/README.md)（含主人忠诚护栏、身份上下文）。
+均需双 MCP（local 模式）。
 
-## 环境变量
+---
 
-| 变量 | 默认（`run_adk_smart_agents.sh`） | 说明 |
-|------|-----------------------------------|------|
-| `GCP_PROJECT_ID` | — | Vertex（必填） |
-| `BILIBILI_MCP_SERVER_URL` | `http://127.0.0.1:8002/mcp` | B 站 MCP |
-| `ETSY_MCP_SERVER_URL` | `http://127.0.0.1:8003/mcp` | Etsy MCP |
-| `SMART_AGENTS_BILIBILI_MCP_SERVER_URL` | — | 覆盖 B 站（隧道演示） |
-| `SMART_AGENTS_ETSY_MCP_SERVER_URL` | — | 覆盖 Etsy |
-| `SMART_AGENTS_ENGINE_ID` | — | 云端部署 Engine ID |
-| `RAG_ENABLED` | `false` | 是否挂载 `rag_search` |
-| `RAG_CORPUS_NAME` | — | corpus 完整 resource name |
-| `RAG_LOCATION` | 从 corpus 解析 | 须与 corpus 同区 |
-| `RAG_PROJECT_ID` | `GCP_PROJECT_ID` | 可选 |
-| `VERTEX_HTTP_PROXY` | 从代理环境继承 | 国内访问 Vertex |
+## 环境变量（核心）
 
-## 云端部署（Agent Engine）
+| 变量 | 说明 |
+|------|------|
+| `GCP_PROJECT_ID` | Vertex（必填） |
+| `GCP_DATA_MCP_ENABLED` | TSE KC + Firestore + 场景工具 |
+| `TSE_FIRESTORE_PROJECT_ID` / `TSE_FIRESTORE_DATABASE` | TSE 库 |
+| `TSE_API_BASE_URL` | TSE 应用根 URL（/chat、/global_report） |
+| `TSE_API_KEY` | 可选运维回落；生产由用户会话 `set_tse_session_api_key` 提供 |
+| `CODE_EXECUTION_ENABLED` | 沙箱 Python |
+| `RAG_*` | 知识库 |
+| `SMART_AGENTS_ENGINE_ID` | 云端 deploy |
+| `FEISHU_LOCAL_SESSION_*` | 飞书 local Session 防爆闸 |
 
-前置：本机 **双 MCP + 隧道**（若要做 RPA），`.env` 中 MCP URL 为公网 HTTPS；RAG 仅需 `RAG_*` + redeploy。
+完整列表： [`.env.example`](../.env.example) · [`env/README.md`](../env/README.md)
 
-**注意**：`adk deploy` 只打包 `smart_agents/`；Skill 放在 `smart_agents/skills/`；密钥与端点写在 **`smart_agents/.env`**（deploy 脚本生成）。
+---
+
+## 云端部署
 
 ```bash
 ./scripts/deploy_smart_agents.sh
 ```
 
-脚本会：同步 `skills/`、写入 MCP + **RAG** 到 `smart_agents/.env`、`--adk_app_object=app`。
+`rsync skills/` → `smart_agents/skills/`，生成 `smart_agents/.env`，`adk deploy ... --adk_app_object=app`。
+
+### 并行第二 Engine（A2A）
+
+不替换 `SMART_AGENTS_ENGINE_ID`（xiaozhi / 飞书 cloud）。另起一台 Runtime，用 Vertex `A2aAgent` 包同一棵 `root_agent`：
+
+```bash
+./scripts/run_a2a_smart_agents_local.sh          # card smoke
+./scripts/run_a2a_smart_agents_local.sh live     # 可选；需双 MCP
+./scripts/deploy_smart_agents_a2a.sh             # 创建或更新 SMART_AGENTS_A2A_ENGINE_ID
+```
+
+PoC Executor 使用 in-memory Session/Memory（尚未接 App Memory Bank）。云端 RPA 仍需可达 MCP 隧道。
+
+模块：`a2a_card.py` · `a2a_executor.py` · `a2a_agent.py`。
+
+---
 
 ## 相关文档
 
-- 操作手册：[`../user_guide.md`](../user_guide.md) §4（调度树）· §5（飞书）· §6（部署）· §10（RAG）
-- 导读：[`../README.md`](../README.md)
-- ADK：[`../docs/adk_learning_guide.md`](../docs/adk_learning_guide.md)
-- 脚本：[`../scripts/README.md`](../scripts/README.md)
+- [`user_guide.md`](../user_guide.md) §4–§6、§11–§12
+- [`docs/agent_platform_learning_guide.md`](../docs/agent_platform_learning_guide.md)
+- [`integrations/feishu/README.md`](../integrations/feishu/README.md)
+- [`local_node/README.md`](../local_node/README.md)
+# SAP Computer Use（可选）
+
+小智支持通过独立浏览器执行服务按采购订单号查询 SAP，使用截图驱动的 Gemini Computer Use。
+默认关闭；启动、登录、只读边界和 TSE 云端限制见 [SAP 接入说明](../docs/sap_computer_use.md)。
+
+小智同时支持上传发票图片/PDF，提取采购订单号、供应商、金额、币种和日期，再执行 SAP 查询。
+触发话术、原生附件输入与部署配置见 [发票 → SAP Demo](../docs/sap_invoice_demo.md)。
+云端小智通过 HTTPS 调用本机专用 SAP 浏览器，启动与绑定见 [本机接入说明](../docs/sap_local_bridge.md)。
+当前客户 PoC 使用固定三步黄金路径，脚本和实际能力范围见 [黄金路径 Demo](../docs/sap_golden_path.md)。

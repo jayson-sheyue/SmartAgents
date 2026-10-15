@@ -1,157 +1,164 @@
-# 飞书 × SmartAgents（双通道：local / cloud）
+# 飞书 × SmartAgents（入站 bridge）
 
-飞书群聊 / 私聊作为用户入口，支持两种 Agent Runtime：
-- `local`：Bridge 进程内 ADK Runner（本机 `smart_agents`）
-- `cloud`：Bridge 调用 Agent Engine Runtime（云端 `smart_agents`）
+飞书群聊 / 私聊接入 **smart_agents 调度树**（小智 + 阿B + E姐 + 小飞），支持本机 Runner 与云端 Agent Engine 两种模式。
+
+> **正交能力**：本目录是「飞书 → SmartAgents」**入站**通道。  
+> 「小飞」专家（`domains/feishu` + Cloud Run `feishu-mcp` + `lark-cli`）是「SmartAgents → 飞书」**出站**操作，见 [`docs/domains_architecture.md`](../../docs/domains_architecture.md)。
+
+---
 
 ## 架构
 
 ```
-飞书群 @机器人
-  → integrations/feishu/bridge.py（WebSocket 长连接）
-  → local: ADK Runner（smart_agents 小智 + 阿B + E姐）
-  → cloud: Agent Engine streamQuery
+飞书用户 @机器人
+  → bridge.py（WebSocket 长连接）
+  → agent_client.py
+       ├─ local:  进程内 ADK Runner（smart_agents）
+       └─ cloud:  Vertex Agent Engine streamQuery
+  → 子 Agent 经 Cloud Run MCP（阿B / E姐 / 小飞）
 ```
 
-## 前置条件
+---
 
-1. `.env` 中已有 `GCP_PROJECT_ID`（Vertex）
-2. `.env` 中配置飞书凭证：
+## 第一次配置
 
-```bash
-FEISHU_APP_ID=cli_xxx
-FEISHU_APP_SECRET=xxx   # 或 FEISHU_APP_TOKEN
-```
+1. [飞书开放平台](https://open.feishu.cn/) 创建企业自建应用，开启 **机器人**
+2. **App ID / Secret 写在根 `.env`**；`cp env/local.env.example env/local.env` 保持 `FEISHU_RUN_MODE=local`
 
-3. 飞书后台：事件 `im.message.receive_v1`，订阅方式为 **使用长连接接收事件**（需先启动本 Bridge 再保存）
-
-## 启动
-
-### A) local 模式（默认）
-
-配置：
-```bash
+```env
 FEISHU_RUN_MODE=local
+FEISHU_APP_ID=cli_xxxxxxxx
+FEISHU_APP_SECRET=xxxxxxxx
+GCP_PROJECT_ID=...
 ```
 
-**终端 1 — Bilibili MCP**
+3. 事件订阅：`im.message.receive_v1`，方式选 **使用长连接**
+4. **先启动 Bridge**，再在飞书后台保存事件配置
+
+**启动前检查（自动）**：`run_feishu_smart_agents.sh` 会跑 `check_runtime_env --mode feishu`（含飞书 App ID/Secret）。不必单独手动跑。
+
+手动排错：`python scripts/check_runtime_env.py --mode feishu`
+
+---
+
+## 启动（local 模式，推荐）
 
 ```bash
+# 终端 1
 python mcp_server/bilibili_mcp.py --http
-```
 
-**终端 2 — Etsy MCP**
-
-```bash
+# 终端 2
 python mcp_server/etsy_mcp.py --http
-```
 
-**终端 3 — 飞书 Bridge**
-
-```bash
+# 终端 3
 ./scripts/run_feishu_smart_agents.sh
 ```
 
-### B) cloud 模式（云端 Agent Runtime）
+群聊：`@机器人 帮我导出 Etsy listing 评论`  
+私聊：直接发文字。
 
-配置：
-```bash
+---
+
+## 启动（cloud 模式）
+
+```env
 FEISHU_RUN_MODE=cloud
-# 二选一
-AGENT_RESOURCE_NAME=projects/<project_number>/locations/<location>/reasoningEngines/<engine_id>
-# 或：
-GCP_PROJECT_NUMBER=<project_number>
-GCP_LOCATION=us-central1
-SMART_AGENTS_ENGINE_ID=<smart_agents_engine_id>
+SMART_AGENTS_ENGINE_ID=your-engine-id
+# 或 AGENT_RESOURCE_NAME=projects/.../reasoningEngines/...
 ```
 
-启动：
+前置：完成 [`user_guide.md` §4.2](../user_guide.md)（双隧道 + 双 MCP + `deploy_smart_agents.sh`）。
+
 ```bash
 ./scripts/run_feishu_smart_agents.sh
 ```
 
-## 使用
+长期 Memory Bank 建议用 **cloud + deploy `--adk_app_object=app`**。
 
-- **群聊**：`@你的机器人` + 指令，例如 `@小智 帮我拉 Etsy 评论 …`
-- **私聊**：直接发文字
-- 首条会先收到「小智已收到…」，处理过程中该条消息会更新为当前步骤（如转交专家、调用工具），完成后在同一线程收到最终回复
+---
 
-关闭反馈（可选）：
+## 使用说明
 
-```bash
-FEISHU_SEND_ACK=false          # 不发送「处理中」
-FEISHU_SEND_PROGRESS=false     # 不更新进度文案
+| 功能 | 说明 |
+|------|------|
+| 进度反馈 | 默认先发「处理中」，长任务会更新步骤文案 |
+| 新对话 | 发送 `新对话` 或 `/新对话` 清空当前 Session |
+| 记忆 | 长期记忆按 `feishu_{open_id}`，仅小智 |
+| RAG | 小智 `rag_search`，配置 `RAG_*` 后 redeploy |
+| TSE 数据 | 小智 `list_tse_tool_catalog` → `get_tse_*`（`GCP_DATA_MCP_ENABLED`） |
+| 图表/附件 | Code Execution Artifact → `media_delivery.py` 自动推送 |
+| Session 防爆闸 | `FEISHU_LOCAL_SESSION_GUARD_ENABLED`（local 默认开） |
+
+关闭进度（可选）：
+
+```env
+FEISHU_SEND_ACK=false
+FEISHU_SEND_PROGRESS=false
 ```
 
-### 记忆与「新对话」
+---
 
-- 长期记忆（Memory Bank）按 **`feishu_{open_id}`** 隔离，跨群/私聊共享；仅小智使用
-- 短期上下文（Session）按 **群/私聊 + 用户** 隔离
-- **cloud 模式**：飞书 session 键与 Agent Engine 分配的 `session_id` 通过本地 SQLite 映射（`feishu_cloud_sessions.db`）；创建时不可传自定义 id
-- **Memory Bank 刷写**：每轮对话后 Bridge 侧兜底调用 `memories.generate`（不依赖 Engine 内 callback 是否生效）
-- 发送 **`新对话`** / **`/新对话`**：清空当前 Session 映射并删除云端 Session，**不**删除长期记忆
-- 持久长期记忆需 **`FEISHU_RUN_MODE=cloud`** 并已 deploy（`--adk_app_object=app`）
-- **知识库问答**由云端小智的 `rag_search` 处理（与飞书 Bridge 无关）；配置见根 `.env` 的 `RAG_*` 与 [`user_guide.md` §10](../../user_guide.md#10-知识库-rag-poc)
+## 主人忠诚护栏（可选）
 
-### 身份上下文与主人忠诚护栏
+```env
+FEISHU_OWNER_OPEN_ID=ou_xxxxxxxx
+FEISHU_OWNER_ALIASES=显示名,昵称
+FEISHU_STRICT_LOYALTY_MODE=true
+```
 
-Bridge 在调用 Agent 前会注入结构化上下文（sender `open_id`、mentions、原始文本），见 `build_identity_prompt`。
+非主人的「改系统规则 / 攻击主人」类消息会被 Bridge 直接拦截。
 
-忠诚模式（默认开启，可调）：
-
-| 变量 | 说明 |
-|------|------|
-| `FEISHU_OWNER_OPEN_ID` | 主人 open_id |
-| `FEISHU_OWNER_ALIASES` | 主人别名（逗号分隔） |
-| `FEISHU_STRICT_LOYALTY_MODE` | `true`：拦截非主人的注入/改规则/攻击主人指令，并过滤风险回复 |
-
-- 护栏**不阻止**其他用户写自己的 Memory Bank（记忆按 `user_id` 隔离）
-- 命中注入关键词的消息会被直接拒绝，不进入 Agent
+---
 
 ## 环境变量
 
 | 变量 | 说明 |
 |------|------|
-| `FEISHU_APP_ID` | 飞书应用 App ID |
-| `FEISHU_APP_SECRET` | 应用密钥（或 `FEISHU_APP_TOKEN`） |
-| `FEISHU_BOT_OPEN_ID` | 可选，精确识别群聊 @ 本机器人 |
-| `FEISHU_OWNER_OPEN_ID` | 可选，主人 open_id（开启忠诚防护时强烈建议填写） |
-| `FEISHU_OWNER_ALIASES` | 可选，主人称呼别名，逗号分隔（如 `display_name,nickname`） |
-| `FEISHU_STRICT_LOYALTY_MODE` | 默认 `true`；非主人注入/改规则/辱骂主人的指令将被拦截 |
-| `FEISHU_GROUP_REQUIRE_MENTION` | 默认 `true`，群聊必须 @ |
-| `FEISHU_SEND_ACK` | 默认 `true`，先回「处理中」 |
-| `FEISHU_SEND_PROGRESS` | 默认 `true`，将「处理中」消息更新为当前步骤 |
-| `FEISHU_PROGRESS_MIN_INTERVAL_SEC` | 进度消息最小更新间隔（秒），默认 `1.5` |
-| `FEISHU_ACK_TEXT` | 「处理中」首条文案 |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭证（必填） |
 | `FEISHU_RUN_MODE` | `local`（默认）或 `cloud` |
-| `SMART_AGENTS_BILIBILI_MCP_SERVER_URL` | 默认 `http://127.0.0.1:8002/mcp` |
-| `SMART_AGENTS_ETSY_MCP_SERVER_URL` | 默认 `http://127.0.0.1:8003/mcp` |
-| `AGENT_RESOURCE_NAME` | cloud 模式可选（推荐，显式指定云端 Engine） |
-| `GCP_PROJECT_NUMBER` / `SMART_AGENTS_ENGINE_ID` | cloud 模式下未设置 `AGENT_RESOURCE_NAME` 时必填 |
+| `SMART_AGENTS_BILIBILI_MCP_SERVER_URL` / `SMART_AGENTS_ETSY_MCP_SERVER_URL` | 子 Agent MCP（默认 `127.0.0.1`） |
+| `FEISHU_BOT_OPEN_ID` | 可选，精确识别 @ 本机器人 |
+| `FEISHU_GROUP_REQUIRE_MENTION` | 默认 `true`，群聊须 @ |
+| `FEISHU_SSL_VERIFY` | 代理 MITM 时可设 `false`（仅开发） |
+| `FEISHU_LOCAL_SESSION_GUARD_ENABLED` | local 模式 Session 防爆闸（防 token 溢出） |
+| `FEISHU_LOCAL_SESSION_MAX_EVENTS` / `MAX_CHARS` | 防爆闸阈值 |
+| `GCP_DATA_MCP_ENABLED` | 小智 TSE 数据能力（Bridge 侧与 Agent 一致） |
 
-会话持久化：`integrations/feishu/data/feishu_sessions.db`（SQLite）。
+完整列表见 [`config.py`](config.py)。
 
-## SSL 证书错误
+---
 
-若启动报 `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain`，多为公司代理或 Clash MITM 导致。本地开发可在 `.env` 加：
+## 常见问题
 
-```bash
-FEISHU_SSL_VERIFY=false
-```
+| 现象 | 处理 |
+|------|------|
+| `app_id is invalid` | 根 `.env` 仍是占位符 | 填真实飞书凭证 |
+| 只回「评论专家」、不像 E姐 | `FEISHU_RUN_MODE=cloud` 连了旧 Engine → 改 `local` 或 redeploy |
+| SSL 证书错误 | `FEISHU_SSL_VERIFY=false` 或导入企业 CA |
+| B 站 / Etsy 工具失败 | 确认双 MCP 已起 |
+| Token 溢出 400 | Session guard / 发「新对话」 |
+| TSE 答非所问 | 确认 `GCP_DATA_MCP_ENABLED=true` 且已重启 Bridge |
 
-然后重启 Bridge。生产环境应导入企业 CA 证书，而非关闭校验。
+---
 
-## 文件说明
+## 源码索引
 
 | 文件 | 作用 |
 |------|------|
-| `bridge.py` | 长连接入口、消息收发、护栏与身份上下文注入 |
-| `agent_client.py` | 双通道 Agent Client（local Runner / cloud Agent Engine） |
-| `cloud_session_store.py` | 飞书逻辑 session → Engine session 映射（cloud） |
-| `message_utils.py` | 解析文本、mentions、session 键、忠诚攻击检测 |
+| `bridge.py` | 长连接、收发消息 |
+| `agent_client.py` | local / cloud 双通道、Session guard |
+| `media_delivery.py` | Code Execution Artifact → 飞书图片/文件 |
+| `cloud_session_store.py` | cloud 模式 Session 映射 |
+| `message_utils.py` | 解析、护栏 |
 | `config.py` | 环境变量 |
+
+Session 数据：`integrations/feishu/data/feishu_sessions.db`。
+
+---
 
 ## 相关文档
 
-- 操作手册：[`../../user_guide.md`](../../user_guide.md) §5（飞书）· §4（调度树）· §10（RAG）
-- 调度树：[`../../smart_agents/README.md`](../../smart_agents/README.md)
+- [`../../user_guide.md`](../../user_guide.md) §5
+- [`../../smart_agents/README.md`](../../smart_agents/README.md)
+- [`../../env/README.md`](../../env/README.md)
+- [`../../docs/agent_platform_learning_guide.md`](../../docs/agent_platform_learning_guide.md) §10

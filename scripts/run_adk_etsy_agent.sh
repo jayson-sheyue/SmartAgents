@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# 本地 adk run etsy_agent — Etsy Skill Agent（进程内工具，无需 MCP/REST）
+# 本地 adk run etsy_agent — Etsy MCP + Skill（评论 + 上架素材生图）
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-set -a && [ -f "$ROOT/.env" ] && source "$ROOT/.env"; set +a
+
+# shellcheck source=lib/load_env.sh
+source "$ROOT/scripts/lib/load_env.sh"
+load_smartagents_env "$ROOT"
 
 if [ -z "${VERTEX_HTTP_PROXY:-}" ]; then
   for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
@@ -18,6 +21,12 @@ for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy; do
 done
 
 export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost,.local}"
+export ETSY_MCP_SERVER_URL="${ETSY_MCP_SERVER_URL:-}"
+if [ -z "${ETSY_MCP_SERVER_URL}" ]; then
+  echo "请在 .env 设置 Cloud Run ETSY_MCP_SERVER_URL" >&2
+  exit 1
+fi
 
 source "$ROOT/.venvAgents/bin/activate"
+python "$ROOT/scripts/check_runtime_env.py" --mode etsy_agent
 exec adk run etsy_agent "$@"

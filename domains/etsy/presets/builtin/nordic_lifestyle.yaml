@@ -1,0 +1,16 @@
+id: nordic_lifestyle
+label: 北欧生活场景
+description: 明亮室内、绿植、柔和日光，适合家居与植物类商品
+scene_default: bright scandinavian interior, soft daylight, indoor plants, clean minimal decor
+slots:
+  rank_1:
+    scene: "{scene_default}, lifestyle hero shot, product in use"
+  rank_2:
+    scene: "{scene_default}, clean product detail, subtle depth"
+  rank_3:
+    scene: "{scene_default}, in-context on wooden shelf or windowsill"
+  default:
+    scene: "{scene_default}, professional e-commerce lifestyle"
+constraints:
+  keep_product: true
+  no_text_overlay: true

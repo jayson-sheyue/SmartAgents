@@ -26,6 +26,16 @@
             display: none; flex-direction: column; overflow: hidden; z-index: 1000;
         }
 
+        /* iframe 嵌入模式：由宿主页的 embed.js 提供悬浮按钮 */
+        body.embed-mode { background: #fff; height: 100vh; overflow: hidden; }
+        body.embed-mode #widget-button { display: none !important; }
+        body.embed-mode #chat-panel {
+            display: flex !important;
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            border-radius: 0; box-shadow: none;
+        }
+
         .chat-header {
             background: var(--bili-blue); color: white; padding: 12px 15px;
             font-weight: 600; font-size: 15px;
@@ -98,7 +108,11 @@
     </div>
 
     <script>
-        const API_BASE = (window.location.port === '8000') ? '' : 'http://localhost:8000';
+        const IS_EMBED = new URLSearchParams(window.location.search).get('embed') === '1';
+        if (IS_EMBED) document.body.classList.add('embed-mode');
+
+        // 同源（含 iframe embed）用相对路径；跨页直开非 8000 端口时回退本机 Widget
+        const API_BASE = (window.location.port === '8000' || IS_EMBED) ? '' : 'http://localhost:8000';
         const USER_KEY = 'smart_agents_widget_user_id';
         const SESSION_KEY = 'bilibili_widget_session';
         let userId = sessionStorage.getItem(USER_KEY);
@@ -307,8 +321,11 @@
         }
 
         updateSessionLabel();
-        // 若从 http://localhost:8000/ 打开，页面加载即续接 session
-        if (window.location.port === '8000') {
+        // 独立打开或 iframe embed 时，页面加载即续接 session
+        if (window.location.port === '8000' || IS_EMBED) {
+            if (IS_EMBED) {
+                checkHealth();
+            }
             initSession();
         }
     </script>

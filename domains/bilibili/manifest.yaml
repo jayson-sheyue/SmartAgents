@@ -1,0 +1,21 @@
+domain: bilibili
+agent_name: Bilibili_Cloud_MCP_Agent
+standalone_name: Bilibili_Agent
+description: "B 站专家阿B：全站热门选品（公开 API）"
+
+skills:
+  - bilibili-trend
+
+mcp_tools:
+  - fetch_hot_videos
+  - export_hot_videos_excel
+
+routing_keywords:
+  - bilibili
+  - b站
+  - 哔哩哔哩
+  - 热点
+  - 爆款
+  - 热门
+  - 排行榜
+  - 选品

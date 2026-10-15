@@ -1,74 +1,91 @@
-# etsy_agent — Etsy 评论 Agent
+# etsy_agent — Etsy ADK 包
 
-Etsy 域模块：**Open API v3**，支持三种 Agent 路径。
+Etsy 专家 **E姐**：通过 **MCP + 双 Skill** 完成评论导出与上架素材换场景生图（异步）。
 
-## 三条路径
+---
 
-| 路径 | 目录 | 执行方式 | 本地联调 |
-|------|------|----------|----------|
-| **进程内** | `etsy_agent/` | Skill + 直连 `etsy_tools` | `./scripts/run_adk_etsy_agent.sh` |
-| **REST** | `etsy_cloud_agent/` | Skill + HTTP → `:8001` | `./scripts/run_adk_etsy_cloud_agent.sh` + Cloudflare Tunnel 或 `127.0.0.1` |
-| **MCP** | `etsy_cloud_agent_mcp/` | Skill + MCP → `:8003` | `./scripts/run_adk_etsy_cloud_agent_mcp.sh` + Cloudflare Tunnel 或 `127.0.0.1` |
+## 组成
 
-企业 demo 推荐 **REST / MCP**（凭证与 Excel 留在本机）。快速改 Skill 可用进程内路径。
+| 部分 | 路径 |
+|------|------|
+| ADK 入口 | `agent.py` → `build_etsy_agent(standalone=True)` |
+| L1 工具 | [`domains/etsy/`](../domains/etsy/)（`etsy_tools` · `image_tools` · `preset_tools`） |
+| Agent 构建 | [`domains/etsy/builder.py`](../domains/etsy/builder.py) |
+| MCP 服务 | `mcp_server/etsy_mcp.py` → **:8003/mcp** |
+| Skills | `skills/etsy-review/` · `skills/etsy-listing-assets/` |
+| 内置预设 | `domains/etsy/presets/builtin/*.yaml` |
 
-B 站域对称结构：`bilibili_agent` / `bilibili_cloud_agent` / `bilibili_cloud_agent_mcp`（见 [`../README.md`](../README.md)）。
+---
 
-## 目录结构
+## 本地运行
 
-```
-etsy_agent/etsy_tools.py     ← L1 工具（唯一实现）
-local_node/server.py         ← REST /api/etsy_*
-mcp_server/etsy_mcp.py       ← MCP :8003
-skills/etsy-review/          ← Skill SOP
-etsy_cloud_agent/            ← REST Agent
-etsy_cloud_agent_mcp/        ← MCP Agent
-```
-
-## 本地 Cloudflare Tunnel 联调（REST）
+**终端 1 — MCP（必须先起）**
 
 ```bash
-# 终端 1
-python local_node/server.py
-
-# 终端 2
-cloudflared tunnel --url http://127.0.0.1:8001
-# 更新 .env ETSY_REST_SERVER_URL=https://....trycloudflare.com
-
-# 终端 3
-./scripts/run_adk_etsy_cloud_agent.sh
-```
-
-## 本地 Cloudflare Tunnel 联调（MCP）
-
-```bash
-# 终端 1
 python mcp_server/etsy_mcp.py --http
-
-# 终端 2
-cloudflared tunnel --url http://127.0.0.1:8003
-# 更新 .env ETSY_MCP_SERVER_URL=https://....trycloudflare.com/mcp
-
-# 终端 3
-./scripts/run_adk_etsy_cloud_agent_mcp.sh
 ```
 
-本机直连（免隧道）：见 [`../etsy_cloud_agent/README.md`](../etsy_cloud_agent/README.md) 与 [`../etsy_cloud_agent_mcp/README.md`](../etsy_cloud_agent_mcp/README.md)。
+**终端 2 — Agent**
 
-## L1 工具测试（无大模型）
+```bash
+./scripts/run_adk_etsy_agent.sh
+```
+
+> Etsy 凭证写在根 `.env`；`env/local.env` 设本地 MCP URL。须先起 `etsy_mcp.py --http`。
+
+---
+
+## 前置条件
+
+| 能力 | 环境变量 |
+|------|----------|
+| 评论 API | `ETSY_KEYSTRING` · `ETSY_SHARED_SECRET` |
+| 生图上传 GCS | `ETSY_IMAGE_GCS_BUCKET` 等 |
+| Vertex | `GCP_PROJECT_ID`（ADC：`gcloud auth application-default login`） |
+
+凭证自检：
 
 ```bash
 python scripts/test_etsy_local.py --check-credentials --verify-api
-python scripts/test_etsy_local.py --listing-id 786582119 --live-fetch
 ```
 
-## 凭证
+---
 
-本机 `.env`：`ETSY_KEYSTRING` + `ETSY_SHARED_SECRET`（申请步骤见 [`../user_guide.md` §0.5](../user_guide.md#05-etsy-open-api-凭证按需)）。REST/MCP 路径下由 `local_node` / `etsy_mcp` 读取，不经 Agent 上云。
+## Skill 分工
+
+| Skill | 场景 |
+|-------|------|
+| `etsy-review` | 拉评论、写 Excel |
+| `etsy-listing-assets` | 预设、换场景、异步 `etsy_submit_scene_variants_job` |
+
+Agent instruction 要求：**先 `load_skill`，再调 MCP 工具**。
+
+---
+
+## 作为调度树子 Agent
+
+`smart_agents/agent.py` 使用 `build_etsy_agent(standalone=False)`。  
+子 Agent 名：`Etsy_Cloud_MCP_Agent`。
+
+---
+
+## 云端 deploy
+
+```bash
+adk deploy agent_engine etsy_agent \
+  --project=$GCP_PROJECT_ID \
+  --region=$GCP_LOCATION \
+  --display_name="Etsy Agent" \
+  --agent_engine_id=$ETSY_MCP_AGENT_ENGINE_ID
+```
+
+云端须能访问本机 `:8003` MCP（通常经 Cloudflare 隧道）。
+
+---
 
 ## 相关文档
 
-- 操作手册：[`../user_guide.md`](../user_guide.md) §3（Etsy 域）
-- 导读：[`../README.md`](../README.md)
-- 脚本：[`../scripts/README.md`](../scripts/README.md)
-- Skill：[`../skills/etsy-review/SKILL.md`](../skills/etsy-review/SKILL.md)
+- [`../user_guide.md`](../user_guide.md) §3
+- [`../skills/etsy-review/SKILL.md`](../skills/etsy-review/SKILL.md)
+- [`../skills/etsy-listing-assets/SKILL.md`](../skills/etsy-listing-assets/SKILL.md)
+- [`../docs/agent_platform_learning_guide.md`](../docs/agent_platform_learning_guide.md) §8

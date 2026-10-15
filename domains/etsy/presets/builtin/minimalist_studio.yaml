@@ -1,0 +1,16 @@
+id: minimalist_studio
+label: 极简工作室
+description: 中性色调、几何简洁，偏现代电商主图
+scene_default: minimalist modern studio, neutral beige and gray palette, clean lines
+slots:
+  rank_1:
+    scene: "{scene_default}, editorial lifestyle composition"
+  rank_2:
+    scene: "{scene_default}, sharp product detail, geometric negative space"
+  rank_3:
+    scene: "{scene_default}, product on matte surface, contemporary styling"
+  default:
+    scene: "{scene_default}, modern minimalist e-commerce"
+constraints:
+  keep_product: true
+  no_text_overlay: true

@@ -1,0 +1,16 @@
+id: holiday_warm
+label: 节日暖色
+description: 暖光、温馨节日氛围，克制装饰不过度喧宾夺主
+scene_default: warm cozy holiday atmosphere, soft golden lighting, subtle seasonal greenery accents
+slots:
+  rank_1:
+    scene: "{scene_default}, lifestyle gift-ready scene, inviting home setting"
+  rank_2:
+    scene: "{scene_default}, product detail with warm bokeh background"
+  rank_3:
+    scene: "{scene_default}, product on rustic table with soft festive props"
+  default:
+    scene: "{scene_default}, festive e-commerce lifestyle"
+constraints:
+  keep_product: true
+  no_text_overlay: true

@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import os
 from functools import cached_property
+from pathlib import Path
 from typing import Optional
 
 import httpx
-from dotenv import load_dotenv
 from google.adk.models import Gemini
 from google.genai import Client
 
-load_dotenv()
+from smart_agents.env_runtime import load_runtime_env
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_runtime_env(default_env_path=str(_PROJECT_ROOT / ".env"))
 
 # Agent Engine / Cloud Run 自动注入 GOOGLE_CLOUD_PROJECT，本地开发用 GCP_PROJECT_ID
 PROJECT_ID = (
@@ -27,6 +30,9 @@ LOCATION = (
     or os.getenv("GOOGLE_CLOUD_LOCATION")
     or "us-central1"
 )
+# 3.8 Flash 只在 global / multi-region 提供。Agent Engine 与代码沙箱仍用上面的 LOCATION。
+MODEL_ID = (os.getenv("SMART_AGENTS_MODEL") or "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+MODEL_LOCATION = (os.getenv("SMART_AGENTS_MODEL_LOCATION") or "global").strip() or "global"
 
 if not PROJECT_ID:
     raise RuntimeError(
@@ -88,7 +94,7 @@ class VertexGemini(Gemini):
         return Client(
             vertexai=True,
             project=PROJECT_ID,
-            location=LOCATION,
+            location=MODEL_LOCATION,
             http_options={
                 "httpx_async_client": _VERTEX_HTTPX_ASYNC,
                 "httpx_client": _VERTEX_HTTPX_SYNC,
@@ -100,4 +106,4 @@ class VertexGemini(Gemini):
         )
 
 
-vertex_model = VertexGemini(model="gemini-2.5-pro")
+vertex_model = VertexGemini(model=MODEL_ID)

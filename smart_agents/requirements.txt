@@ -1,6 +1,10 @@
-google-adk>=2.3.0
-google-cloud-aiplatform
+google-adk[mcp]>=2.3.0
+google-cloud-aiplatform[agent_engines]>=1.154.0
 google-genai
 python-dotenv
 httpx
-mcp>=1.28.0
+requests
+PyYAML
+mcp>=1.24,<2
+anyio>=4.9,<5
+pypinyin>=0.53.0

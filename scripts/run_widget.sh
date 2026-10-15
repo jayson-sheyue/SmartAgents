@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# 启动 Web Widget 中转（:8000）并提示依赖项
+# 启动 Web Widget 中转（:8000）
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# shellcheck source=lib/load_env.sh
+source "$ROOT/scripts/lib/load_env.sh"
+load_smartagents_env "$ROOT"
 
 if [ -z "${VERTEX_HTTP_PROXY:-}" ]; then
   for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do

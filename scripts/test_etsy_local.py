@@ -16,7 +16,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from etsy_agent.etsy_tools import (  # noqa: E402
+from domains.etsy.etsy_tools import (  # noqa: E402
     DEFAULT_EXPORT_PATH,
     extract_listing_id,
     tool_etsy_check_credentials,
