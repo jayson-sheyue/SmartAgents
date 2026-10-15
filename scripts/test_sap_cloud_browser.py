@@ -117,6 +117,23 @@ if sys.argv[1:4]==['run','services','describe']:print('https://fake-sap.run.app'
             self.assertEqual((work/'.sap_cloud/cloud.env').stat().st_mode & 0o777,0o600)
 
 class ContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unapproved_sso_origin_is_reported_without_entering_credentials(self):
+        worker=CloudSapBrowserWorker(url=URL,profile_dir=Path('/tmp'),state_store=MemoryState())
+        page=SimpleNamespace(url='https://tenant.accounts.cloud.sap/login',is_closed=lambda:False,
+            keyboard=SimpleNamespace(type=AsyncMock()),screenshot=AsyncMock())
+        worker.sessions[A]=SimpleNamespace(page=page,lock=asyncio.Lock())
+        worker.revisions[A]=1
+        worker._logged_in=AsyncMock(return_value=False)
+        worker._ready=AsyncMock(return_value={'ok':True,'logged_in':False})
+        result=await worker.login_action(A,{'kind':'text','text':'private-value'},1)
+        self.assertEqual(result['error']['code'],'LOGIN_ORIGIN_BLOCKED')
+        self.assertEqual(result['current_origin'],'https://tenant.accounts.cloud.sap')
+        self.assertNotIn('private-value',str(result))
+        page.keyboard.type.assert_not_awaited()
+        result=await worker.login_snapshot(A)
+        self.assertEqual(result['current_origin'],'https://tenant.accounts.cloud.sap')
+        page.screenshot.assert_not_awaited()
+
     async def test_private_app_auth_cloud_identity_and_no_legacy_snapshot(self):
         worker=SimpleNamespace(execution_location='cloud_browser',shutdown=AsyncMock(),status=AsyncMock(return_value={'ok':True}),
             prepare=AsyncMock(return_value={'ok':True,'wait_user':True,'logged_in':False,'browser_login_required':True,'user_prompt':'云端登录'}),

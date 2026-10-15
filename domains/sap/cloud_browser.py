@@ -176,7 +176,8 @@ class CloudSapBrowserWorker(SapBrowserWorker):
             if await self._logged_in(session.page):
                 return await self._ready(user)
             if origin(session.page.url) not in self.login_origins:
-                return failure('LOGIN_ORIGIN_BLOCKED', '当前登录站点尚未获准人工操作。', wait_user=True)
+                return {**failure('LOGIN_ORIGIN_BLOCKED', '当前登录站点尚未获准人工操作，请管理员确认并配置此登录域名。', wait_user=True),
+                        'current_origin': origin(session.page.url)}
             if type(revision) is not int or revision != self.revisions[user]:
                 return failure('STALE_SCREENSHOT', '画面已更新，请刷新后再操作；本次输入未执行。', wait_user=True)
             if not isinstance(action, dict):
