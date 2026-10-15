@@ -15,6 +15,11 @@ BROWSER_DEMO_INSTRUCTION = '''
   比较后将较便宜的一款加入购物车并核验总价，返回截图。不需要登录或本机服务。
 - 仅支持这个场景，不声称可以操作任意网站，不接受购买、付款或登录任务。
 - 失败如实说明，不自动重复运行；仅根据工具结果说明价格、商品和执行结果。
+- 用户要求“表单演示 / 控件演示 / 下拉框 / 复选框 / 单选按钮”等 Computer Use 操作时，
+  直接调用 browser_demo_fill_form，不调用商城比价工具，不走检索瀑布。
+- 表单演示使用 Selenium 官方公开测试页，固定演示文本框、多行文本、下拉选择、复选框、单选按钮，
+  核验状态后返回操作前后截图，停留在表单，不提交。无需登录，不填写密码或上传文件。
+- 两个演示工具都只支持各自固定场景；不承诺任意网站、任意表单或用户自定义字段。
 '''
 
 
@@ -34,6 +39,51 @@ async def browser_demo_compare_laptops(tool_context: ToolContext) -> dict:
     if not result.get('ok') and str((result.get('error') or {}).get('code', '')).startswith('SAP_'):
         result['error']['message'] = '云端浏览器演示服务暂不可用，请管理员检查服务配置和调用权限。'
     return result
+
+
+async def browser_demo_fill_form(tool_context: ToolContext) -> dict:
+    """演示 Computer Use 操作公开测试表单：填文本、选下拉、切换复选框/单选按钮并核验，返回前后截图，不提交。"""
+    result = await _request('demo/form-controls', tool_context)
+    images = result.pop('screenshots', [])
+    if result.get('ok') and isinstance(images, list):
+        entries = []
+        for item in images[:2]:
+            try:
+                filename = item['filename']
+                if filename not in {'form-before.png', 'form-filled.png'}:
+                    raise ValueError('Unexpected form image')
+                version = await tool_context.save_artifact(filename=filename, artifact=types.Part.from_bytes(
+                    data=base64.b64decode(item['base64'], validate=True), mime_type='image/png'))
+                record_image_artifact_for_delivery(tool_context.state, filename=filename, version=version, mime_type='image/png')
+                entries.append({'filename': filename, 'version': version, 'mime_type': 'image/png'})
+            except Exception:
+                result['screenshot_delivery_failed'] = True
+        result['artifacts'] = entries
+        if len(entries) != 2:
+            result['screenshot_delivery_failed'] = True
+    if not result.get('ok') and str((result.get('error') or {}).get('code', '')).startswith('SAP_'):
+        result['error']['message'] = '云端表单演示服务暂不可用，请管理员检查服务配置和调用权限。'
+    return result
+
+
+def format_form_demo_result(result, cell):
+    if result.get('ok') is not True:
+        return '**表单演示尚未完成**\n\n' + cell((result.get('error') or {}).get('message', '未取得可核验结果。'))
+    fields = result.get('fields') or {}
+    def checked(key):
+        return '已选中' if fields.get(key) is True else '未选中' if fields.get(key) is False else '未核验'
+    lines = ['**Computer Use 表单控件演示已完成**', '', '| 控件 | 实际核验结果 |', '| --- | --- |',
+             f"| 文本框 | {cell(fields.get('text'))} |", f"| 多行文本 | {cell(fields.get('notes'))} |",
+             f"| 下拉框 | {cell(fields.get('dropdown_label'))} |",
+             f"| Checked checkbox | {checked('checked_checkbox')} |",
+             f"| Default checkbox | {checked('default_checkbox')} |",
+             f"| Checked radio | {checked('checked_radio')} |",
+             f"| Default radio | {checked('default_radio')} |", '',
+             '已核验上述控件状态；表单停留在填写完成页面，**未提交**。', '',
+             f"本次由云端 Computer Use 根据截图操作，耗时约 {cell(result.get('seconds'))} 秒。"]
+    if result.get('screenshot_delivery_failed'):
+        lines += ['', '部分截图未能交付，当前图片可能不完整。']
+    return '\n'.join(lines)
 
 
 def format_browser_demo_result(result, cell):

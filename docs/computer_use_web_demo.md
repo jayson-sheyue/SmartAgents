@@ -1,4 +1,38 @@
-# 无需登录的商城 Computer Use 演示
+# 无需登录的公开网页 Computer Use 演示
+
+## 表单与控件演示
+
+在 TSE 的 SmartAgents 新会话中发送：
+
+> 运行 Computer Use 表单控件演示：填写文本框和多行文本，下拉框选择 Two，
+> 取消 Checked checkbox、选中 Default checkbox 和 Default radio，核验后返回操作前后截图，不提交。
+
+简写：“演示 Computer Use 操作表单、下拉框、复选框和单选按钮”。
+小智调用 `browser_demo_fill_form`，访问 Selenium 官方公开测试页：
+<https://www.selenium.dev/selenium/web/web-form.html>。
+
+该工具固定使用 `SmartAgents Demo` 和 `Computer Use form controls demo.` 两段演示文本，
+覆盖文本框、多行文本、原生下拉框、复选框、单选按钮五类控件。
+模型从截图决定坐标、输入与按键；原生下拉框用键盘首字母选择，不用 DOM 的 selectOption。
+禁止 Enter 提前提交、点击 Submit 或导航到提交结果页。
+DOM 只读校验字段与选中状态；仅当所有目标状态均满足时才报告成功。
+
+返回 `form-before.png` 和 `form-filled.png`，通过现有 Artifact 与 TSE 图片通道交付。
+测试页不需要登录，不填写密码、上传文件或操作其他表单。
+目前是固定演示，不支持任意表单、任意站点或自定义字段。
+
+私有 worker 新增 `POST /demo/form-controls`，与商城演示共用并发上限；
+每次使用独立临时浏览器，不访问 SAP 登录资料。
+
+本机真实模型验证：
+
+```bash
+.venvAgents/bin/python -m scripts.check_form_demo
+```
+
+截图与记录位于已忽略的 `.sap_cloud/diagnostics/form-local/`。
+
+## 商城演示
 
 在 TSE 的 SmartAgents 对话中发送：
 

@@ -115,6 +115,19 @@ def create_app(worker: SapBrowserWorker, token: str, *, allowed_users: set[str] 
     if cloud:
         demo_lock = asyncio.Lock()
 
+        @app.post('/demo/form-controls', dependencies=[Depends(authenticate), Depends(authorize_user)])
+        async def form_controls_demo(request: Request):
+            if demo_lock.locked():
+                return local_result(failure('WEB_DEMO_BUSY', '当前已有网页演示在运行，请稍后再试。'))
+            from domains.sap.form_demo import run_form_demo
+            async with demo_lock:
+                try:
+                    return local_result(await asyncio.wait_for(run_form_demo(
+                        client=worker.client, model=worker.model), 180))
+                except Exception as exc:
+                    logger.error('Form demo failed type=%s', type(exc).__name__)
+                    return local_result(failure('FORM_DEMO_FAILED', '表单演示未完成或已超时，请稍后再试。'))
+
         @app.post('/demo/demoblaze', dependencies=[Depends(authenticate), Depends(authorize_user)])
         async def demoblaze_demo(request: Request):
             if demo_lock.locked():
