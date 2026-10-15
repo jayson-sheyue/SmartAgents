@@ -24,7 +24,7 @@ class Request(BaseModel):
 
 
 def create_app(worker: SapBrowserWorker, token: str, *, allowed_users: set[str] | None = None,
-               query_timeout: float = 90) -> FastAPI:
+               query_timeout: float = 90, orangehrm_store=None) -> FastAPI:
     if len(token) < 32:
         raise ValueError("SAP_COMPUTER_USE_TOKEN 必须至少 32 字符")
     cloud = getattr(worker, 'execution_location', '') == 'cloud_browser'
@@ -115,6 +115,22 @@ def create_app(worker: SapBrowserWorker, token: str, *, allowed_users: set[str] 
     if cloud:
         demo_lock = asyncio.Lock()
 
+        @app.post('/demo/orangehrm', dependencies=[Depends(authenticate), Depends(authorize_user)])
+        async def orangehrm_demo(request: Request):
+            if demo_lock.locked():
+                return local_result(failure('WEB_DEMO_BUSY', '当前已有网页演示在运行，请稍后再试。'))
+            if orangehrm_store is None:
+                return local_result(failure('ORANGEHRM_STATE_UNAVAILABLE', 'OrangeHRM 登录资料存储尚未配置。'))
+            from domains.sap.orangehrm_demo import run_orangehrm_demo
+            async with demo_lock:
+                try:
+                    return local_result(await asyncio.wait_for(run_orangehrm_demo(
+                        client=worker.client, model=worker.model, state_store=orangehrm_store,
+                        user_id=request.user_id), 180))
+                except Exception as exc:
+                    logger.error('OrangeHRM demo failed type=%s', type(exc).__name__)
+                    return local_result(failure('ORANGEHRM_DEMO_FAILED', 'OrangeHRM 演示未完成或已超时，请稍后再试。'))
+
         @app.post('/demo/form-controls', dependencies=[Depends(authenticate), Depends(authorize_user)])
         async def form_controls_demo(request: Request):
             if demo_lock.locked():
@@ -172,6 +188,7 @@ def main():
         profile_dir=Path(os.getenv("SAP_BROWSER_PROFILE_DIR", ".sap_browser_profiles")).resolve(),
         model=os.getenv("SAP_COMPUTER_USE_MODEL", "gemini-3.8-flash"),
     )
+    orangehrm_store = None
     if cloud:
         from google import genai
         from google.cloud import storage
@@ -182,6 +199,7 @@ def main():
             location=os.getenv('SAP_COMPUTER_USE_LOCATION', 'global'))
         store = CloudStateStore(storage.Client(project=project).bucket(os.environ['SAP_AUTH_STATE_BUCKET']),
                                 os.environ['SAP_AUTH_STATE_KEY'])
+        orangehrm_store = CloudStateStore(store.bucket, os.environ['SAP_AUTH_STATE_KEY'], prefix='orangehrm-auth')
         worker = CloudSapBrowserWorker(**common, state_store=store,
             login_origins=[v.strip() for v in os.getenv('SAP_LOGIN_ALLOWED_ORIGINS', '').split(',') if v.strip()],
             login_start_url=os.getenv('SAP_LOGIN_START_URL') or None,
@@ -190,7 +208,8 @@ def main():
     else:
         worker = SapBrowserWorker(**common)
     allowed = {item.strip() for item in os.getenv("SAP_WORKER_ALLOWED_USERS", "").split(",") if item.strip()}
-    app = create_app(worker, os.environ["SAP_COMPUTER_USE_TOKEN"], allowed_users=allowed or None)
+    app = create_app(worker, os.environ["SAP_COMPUTER_USE_TOKEN"], allowed_users=allowed or None,
+                     orangehrm_store=orangehrm_store)
     uvicorn.run(app, host="0.0.0.0" if cloud else "127.0.0.1", port=int(os.getenv("PORT" if cloud else "SAP_COMPUTER_USE_PORT", "8010")),
                 access_log=False, workers=1)
 

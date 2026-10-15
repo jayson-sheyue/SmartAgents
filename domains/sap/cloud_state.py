@@ -7,12 +7,15 @@ from google.api_core.exceptions import NotFound
 
 
 class CloudStateStore:
-    def __init__(self, bucket, encryption_key: str):
+    def __init__(self, bucket, encryption_key: str, *, prefix='sap-auth'):
+        if prefix not in {'sap-auth', 'orangehrm-auth'}:
+            raise ValueError('Unknown browser state namespace')
         self.bucket = bucket
         self.cipher = Fernet(encryption_key.encode())
+        self.prefix = prefix
 
     def _blob(self, user):
-        return self.bucket.blob('sap-auth/' + hashlib.sha256(user.encode()).hexdigest() + '.enc')
+        return self.bucket.blob(self.prefix + '/' + hashlib.sha256(user.encode()).hexdigest() + '.enc')
 
     def load(self, user):
         blob = self._blob(user)

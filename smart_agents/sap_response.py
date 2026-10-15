@@ -10,7 +10,7 @@ from google.genai import types
 from smart_agents.artifact_callbacks import _load_image_data_uris, mark_image_artifacts_delivered
 from smart_agents.sap_recovery import sap_recovery_text
 
-SAP_QUERY_TOOLS = frozenset({"sap_query_purchase_order", "sap_query_from_invoice", "sap_query_recognized_invoice", "browser_demo_compare_laptops", "browser_demo_fill_form"})
+SAP_QUERY_TOOLS = frozenset({"sap_query_purchase_order", "sap_query_from_invoice", "sap_query_recognized_invoice", "browser_demo_compare_laptops", "browser_demo_fill_form", "browser_demo_orangehrm_employee"})
 
 
 def _cell(value) -> str:
@@ -65,6 +65,9 @@ async def sap_result_before_model_callback(callback_context, llm_request):
     elif responses[0].name == 'browser_demo_fill_form':
         from smart_agents.browser_demo_tools import format_form_demo_result
         text = format_form_demo_result(result, _cell)
+    elif responses[0].name == 'browser_demo_orangehrm_employee':
+        from smart_agents.browser_demo_tools import format_orangehrm_demo_result
+        text = format_orangehrm_demo_result(result, _cell)
     else:
         text = format_sap_result(result)
     artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), list) else []

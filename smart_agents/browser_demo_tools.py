@@ -20,6 +20,11 @@ BROWSER_DEMO_INSTRUCTION = '''
 - 表单演示使用 Selenium 官方公开测试页，固定演示文本框、多行文本、下拉选择、复选框、单选按钮，
   核验状态后返回操作前后截图，停留在表单，不提交。无需登录，不填写密码或上传文件。
 - 两个演示工具都只支持各自固定场景；不承诺任意网站、任意表单或用户自定义字段。
+- 用户要求 OrangeHRM / 人力资源演示 / 需要登录的 Computer Use 演示时，直接调用
+  browser_demo_orangehrm_employee，不调用 SAP 连接工具、不走知识检索。
+- OrangeHRM 仅使用官网公开测试账号；首次登录后从真实列表选取一条演示员工记录，按编号只读查询。
+  再次运行会实际检验保存的登录态，失效则重新登录。结果说明本次是否复用，不承诺永久免登录。
+  不接收个人账号密码，不创建、编辑、删除员工，不办理请假或审批，不支持任意查询条件。
 '''
 
 
@@ -64,6 +69,50 @@ async def browser_demo_fill_form(tool_context: ToolContext) -> dict:
     if not result.get('ok') and str((result.get('error') or {}).get('code', '')).startswith('SAP_'):
         result['error']['message'] = '云端表单演示服务暂不可用，请管理员检查服务配置和调用权限。'
     return result
+
+
+async def browser_demo_orangehrm_employee(tool_context: ToolContext) -> dict:
+    """Computer Use 登录 OrangeHRM 官方公开演示，按页面实际员工编号只读查询并截图；再次运行检验登录态复用。"""
+    result = await _request('demo/orangehrm', tool_context)
+    images = result.pop('screenshots', [])
+    if result.get('ok') and isinstance(images, list):
+        entries = []
+        for item in images[:2]:
+            try:
+                filename = item['filename']
+                if filename not in {'orangehrm-before.png', 'orangehrm-result.png'}:
+                    raise ValueError('Unexpected OrangeHRM image')
+                version = await tool_context.save_artifact(filename=filename, artifact=types.Part.from_bytes(
+                    data=base64.b64decode(item['base64'], validate=True), mime_type='image/png'))
+                record_image_artifact_for_delivery(tool_context.state, filename=filename, version=version, mime_type='image/png')
+                entries.append({'filename': filename, 'version': version, 'mime_type': 'image/png'})
+            except Exception:
+                result['screenshot_delivery_failed'] = True
+        result['artifacts'] = entries
+        if len(entries) != 2:
+            result['screenshot_delivery_failed'] = True
+    if not result.get('ok') and str((result.get('error') or {}).get('code', '')).startswith('SAP_'):
+        result['error']['message'] = '云端 OrangeHRM 演示服务暂不可用，请管理员检查服务配置和调用权限。'
+    return result
+
+
+def format_orangehrm_demo_result(result, cell):
+    if result.get('ok') is not True:
+        return '**OrangeHRM 演示尚未完成**\n\n' + cell((result.get('error') or {}).get('message', '未取得可核验结果。'))
+    session = '已复用此前保存的登录态，本次没有重新输入账号密码。' if result.get('session_reused') else \
+              '本次使用 OrangeHRM 官方公开演示账号完成登录。'
+    lines = ['**Computer Use 登录与员工查询演示已完成**', '', session, '',
+             f"已从当前页面选取演示员工编号 **{cell(result.get('employee_id'))}** 并完成筛选。", '',
+             '| 员工编号 | 姓名 | 职位 | 雇佣状态 | 部门 |', '| --- | --- | --- | --- | --- |']
+    for row in result.get('employees', []):
+        lines.append('| ' + ' | '.join(cell(v) for v in (row.get('employee_id'),
+            ' '.join([row.get('first_name', ''), row.get('last_name', '')]), row.get('job_title'),
+            row.get('employment_status'), row.get('sub_unit'))) + ' |')
+    lines += ['', '以上为共享演示环境的页面数据；仅执行只读查询，未修改员工资料。', '',
+              f"云端操作耗时约 {cell(result.get('seconds'))} 秒。登录资料已按 TSE 用户隔离加密保存；再次运行可检验复用。"]
+    if result.get('screenshot_delivery_failed'):
+        lines += ['', '部分截图未能交付，当前图片可能不完整。']
+    return '\n'.join(lines)
 
 
 def format_form_demo_result(result, cell):

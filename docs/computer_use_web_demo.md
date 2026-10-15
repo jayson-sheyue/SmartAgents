@@ -71,3 +71,41 @@ DOM 只读校验字段与选中状态；仅当所有目标状态均满足时才�
 
 截图与记录保存在已忽略的 `.sap_cloud/diagnostics/demoblaze-local/`。
 这个脚本在本机执行；云端验收必须实际调用已部署的私有 worker 或 Agent Engine。
+
+## OrangeHRM：登录与员工查询
+
+在 TSE 新会话发送：
+
+> 运行 OrangeHRM Computer Use 演示：使用网站公开演示账号登录，
+> 从当前员工列表选取一条记录，按员工编号只读筛选查询，返回结果和操作前后截图。
+
+然后再发送：
+
+> 再运行一次 OrangeHRM 员工查询，验证是否复用了登录态，并返回截图。
+
+小智直接调用 `browser_demo_orangehrm_employee`，不连接 SAP、不需要本机服务。
+浏览器访问官方公开 Demo：<https://opensource-demo.orangehrmlive.com/>。
+使用登录页公开展示的 `Admin / admin123` 测试账号，不接受个人凭据。
+所有填写与点击坐标来自 Gemini Computer Use；DOM 仅用于操作边界、选取页面实际存在的
+演示员工编号与核验筛选后的实际结果，浏览器自身请求员工接口，程序不直接调用业务接口查询。
+共享演示数据会变化，员工编号从当次页面选取，不能指定任意员工或固定业务数据。
+
+每次创建新浏览器，先访问受保护的员工列表页检验已有 Cookie；仍需登录时才重新登录。
+登录资料使用原私有 GCS 桶、原加密密钥，存于独立的 `orangehrm-auth/<用户哈希>.enc`，
+与 `sap-auth/` 分离；按可信 TSE 身份隔离，保存时使用 GCS generation 条件防止覆盖。
+仅存该 Demo 域名的 Cookie/localStorage，不保存密码、截图或其他站点资料。
+这可在浏览器关闭、Cloud Run 缩减至零后恢复仍有效的站点会话；站点会话过期仍会重新登录。
+公开测试账号是共享账号，因此隔离浏览器资料不代表各用户拥有独立的 OrangeHRM 后端数据。
+
+仅允许登录表单 POST 与只读员工查询 GET；禁止新增、编辑、删除、审批等业务请求。
+成功返回 `orangehrm-before.png` 与 `orangehrm-result.png`，沿用 Artifact/TSE 图片通道，
+图片 Base64 从工具 JSON 移除，不再等待第二次模型整理。
+
+本机真实验证（先登录查询，再关闭浏览器并用保存的状态创建第二个浏览器验证）：
+
+```bash
+.venvAgents/bin/python -m scripts.check_orangehrm_demo
+```
+
+本机验证仅临时保存在内存；生产使用加密 GCS。私有 worker 新增
+`POST /demo/orangehrm`，与其他网页演示共享并发限制。无需新增服务、密钥或环境变量。
