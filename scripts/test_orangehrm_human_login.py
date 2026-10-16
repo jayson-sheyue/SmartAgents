@@ -138,6 +138,32 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wrong['error']['code'],'STALE_SCREENSHOT')
         self.assertEqual(await self.worker.sessions[A].page.locator('[name=username]').input_value(),'')
 
+    async def test_pending_tool_finishes_with_login_link_without_artifact_or_extra_model(self):
+        from google.adk.agents import Agent
+        from google.adk.artifacts.in_memory_artifact_service import InMemoryArtifactService
+        from google.adk.runners import Runner
+        from google.adk.sessions.in_memory_session_service import InMemorySessionService
+        from google.genai import types
+        from scripts.test_sap_response import ToolModel
+        from domains.sap.orangehrm_sessions import login_required
+        from smart_agents.browser_demo_tools import browser_demo_orangehrm_employee
+        from smart_agents.sap_response import sap_result_before_model_callback
+        model=ToolModel(model='offline',tool_name='browser_demo_orangehrm_employee')
+        agent=Agent(name='pending_login',model=model,tools=[browser_demo_orangehrm_employee],
+                    before_model_callback=sap_result_before_model_callback)
+        sessions=InMemorySessionService();session=await sessions.create_session(app_name='pending_login',user_id='one')
+        runner=Runner(agent=agent,app_name='pending_login',session_service=sessions,artifact_service=InMemoryArtifactService())
+        response=login_required()
+        with patch('smart_agents.browser_demo_tools._request',AsyncMock(return_value=response)):
+            events=[e async for e in runner.run_async(user_id='one',session_id=session.id,
+                new_message=types.Content(role='user',parts=[types.Part(text='OrangeHRM 查询')]))]
+        text=''.join(p.text for e in events if e.content and e.content.role=='model' for p in e.content.parts or [] if p.text)
+        self.assertEqual(model._calls,1)
+        self.assertIn('/orangehrm/browser',text)
+        self.assertNotIn('data:image',text)
+        self.assertNotIn('screenshot_delivery_failed',response)
+        self.assertNotIn('查询演示已完成',text)
+
     async def test_switch_while_query_busy_does_not_clear_state(self):
         await self.human_login(A,'alice')
         async with self.worker.sessions[A].lock:
