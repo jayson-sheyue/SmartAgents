@@ -28,10 +28,16 @@ def create_app(worker: SapBrowserWorker, token: str, *, allowed_users: set[str] 
     if len(token) < 32:
         raise ValueError("SAP_COMPUTER_USE_TOKEN 必须至少 32 字符")
     cloud = getattr(worker, 'execution_location', '') == 'cloud_browser'
+    orangehrm_sessions = None
+    if cloud and orangehrm_store is not None:
+        from domains.sap.orangehrm_sessions import OrangeHRMSessions
+        orangehrm_sessions = OrangeHRMSessions(state_store=orangehrm_store)
 
     @asynccontextmanager
     async def lifespan(app):
         yield
+        if orangehrm_sessions:
+            await orangehrm_sessions.shutdown()
         await worker.shutdown()
 
     app = FastAPI(title="SAP Computer Use Worker", lifespan=lifespan,
@@ -121,15 +127,49 @@ def create_app(worker: SapBrowserWorker, token: str, *, allowed_users: set[str] 
                 return local_result(failure('WEB_DEMO_BUSY', '当前已有网页演示在运行，请稍后再试。'))
             if orangehrm_store is None:
                 return local_result(failure('ORANGEHRM_STATE_UNAVAILABLE', 'OrangeHRM 登录资料存储尚未配置。'))
-            from domains.sap.orangehrm_demo import run_orangehrm_demo
             async with demo_lock:
                 try:
-                    return local_result(await asyncio.wait_for(run_orangehrm_demo(
-                        client=worker.client, model=worker.model, state_store=orangehrm_store,
-                        user_id=request.user_id), 180))
+                    return local_result(await asyncio.wait_for(orangehrm_sessions.query(
+                        request.user_id, client=worker.client, model=worker.model), 180))
                 except Exception as exc:
                     logger.error('OrangeHRM demo failed type=%s', type(exc).__name__)
                     return local_result(failure('ORANGEHRM_DEMO_FAILED', 'OrangeHRM 演示未完成或已超时，请稍后再试。'))
+
+        @app.post('/demo/orangehrm-public', dependencies=[Depends(authenticate), Depends(authorize_user)])
+        async def orangehrm_public_demo(request: Request):
+            if demo_lock.locked():
+                return local_result(failure('WEB_DEMO_BUSY', '当前已有网页演示在运行，请稍后再试。'))
+            if orangehrm_store is None:
+                return local_result(failure('ORANGEHRM_STATE_UNAVAILABLE', '登录资料存储尚未配置。'))
+            from domains.sap.orangehrm_demo import run_orangehrm_demo
+            from domains.sap.orangehrm_sessions import ScopedAuthStore, PUBLIC
+            async with demo_lock:
+                try:
+                    result = await asyncio.wait_for(run_orangehrm_demo(client=worker.client,
+                        model=worker.model, state_store=ScopedAuthStore(orangehrm_store, PUBLIC),
+                        user_id=request.user_id), 180)
+                    return local_result({**result, 'auth_mode': 'public_demo'})
+                except Exception as exc:
+                    logger.error('OrangeHRM public demo failed type=%s', type(exc).__name__)
+                    return local_result(failure('ORANGEHRM_DEMO_FAILED', '共享演示未完成或已超时。'))
+
+        @app.post('/orangehrm/{operation}', dependencies=[Depends(authenticate), Depends(authorize_user)])
+        async def orangehrm_human(request: Request, operation: str):
+            if orangehrm_sessions is None:
+                return local_result(failure('ORANGEHRM_STATE_UNAVAILABLE', '登录资料存储尚未配置。'))
+            if operation not in {'prepare', 'status', 'snapshot', 'action', 'close', 'logout'}:
+                raise HTTPException(404, 'Unknown OrangeHRM operation')
+            try:
+                if operation == 'action':
+                    result = await orangehrm_sessions.login_action(request.user_id, request.action, request.revision)
+                else:
+                    method = orangehrm_sessions.login_snapshot if operation == 'snapshot' else getattr(orangehrm_sessions, operation)
+                    result = await asyncio.wait_for(method(request.user_id), 75)
+                return local_result(result)
+            except Exception as exc:
+                logger.error('OrangeHRM human operation=%s failed type=%s', operation, type(exc).__name__)
+                return local_result(failure('ORANGEHRM_STATE_UNAVAILABLE',
+                    '云端 OrangeHRM 登录操作未确认完成，请刷新或重新连接。', wait_user=True))
 
         @app.post('/demo/form-controls', dependencies=[Depends(authenticate), Depends(authorize_user)])
         async def form_controls_demo(request: Request):

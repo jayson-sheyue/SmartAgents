@@ -78,10 +78,10 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         worker=NS(execution_location='cloud_browser',shutdown=AsyncMock(),client=object(),model='test')
         store=object();app=create_app(worker,'t'*40,orangehrm_store=store)
         start,finish=asyncio.Event(),asyncio.Event()
-        async def run(**kw):
-            self.assertEqual(kw['user_id'],'tse:one@example.com');self.assertIs(kw['state_store'],store)
+        async def run(user,**kw):
+            self.assertEqual(user,'tse:one@example.com')
             start.set();await finish.wait();return {'ok':True}
-        with patch('domains.sap.orangehrm_demo.run_orangehrm_demo',run):
+        with patch('domains.sap.orangehrm_sessions.OrangeHRMSessions.query',side_effect=run):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as c:
                 data={'user_id':'tse:one@example.com'};h={'Authorization':'Bearer '+'t'*40}
                 self.assertEqual((await c.post('/demo/orangehrm',json=data)).status_code,401)
@@ -112,7 +112,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
                 new_message=types.Content(role='user',parts=[types.Part(text='OrangeHRM 演示')]))]
         text='\n'.join(p.text for e in events if e.content and e.content.role=='model' for p in e.content.parts or [] if p.text)
         self.assertEqual(model._calls,1);self.assertEqual(text.count('data:image/png;base64,'),2)
-        self.assertIn('已复用',text);self.assertIn('Charlotte Smith',text);self.assertNotIn('screenshots',result)
+        self.assertIn('你亲自登录',text);self.assertIn('Charlotte Smith',text);self.assertNotIn('screenshots',result)
         self.assertNotIn('已复用',format_orangehrm_demo_result({'ok':False,'error':{'message':'Failed'}},str))
 
 

@@ -72,40 +72,69 @@ DOM 只读校验字段与选中状态；仅当所有目标状态均满足时才�
 截图与记录保存在已忽略的 `.sap_cloud/diagnostics/demoblaze-local/`。
 这个脚本在本机执行；云端验收必须实际调用已部署的私有 worker 或 Agent Engine。
 
-## OrangeHRM：登录与员工查询
+## OrangeHRM：本人登录与员工查询（默认）
 
 在 TSE 新会话发送：
 
-> 运行 OrangeHRM Computer Use 演示：使用网站公开演示账号登录，
-> 从当前员工列表选取一条记录，按员工编号只读筛选查询，返回结果和操作前后截图。
+> 连接 OrangeHRM，我要使用自己的账号登录。
 
-然后再发送：
+点击回复中的“打开 OrangeHRM 登录页面”，在专属云端浏览器中亲自输入账号、密码、验证码。
+这些输入只经过 TSE 登录代理发往 Playwright，不进入聊天、Artifact、模型提示词或日志。
+登录完成后回到对话发送：
 
-> 再运行一次 OrangeHRM 员工查询，验证是否复用了登录态，并返回截图。
+> 已登录，继续 OrangeHRM 员工只读查询，返回操作前后截图。
 
-小智直接调用 `browser_demo_orangehrm_employee`，不连接 SAP、不需要本机服务。
-浏览器访问官方公开 Demo：<https://opensource-demo.orangehrmlive.com/>。
-使用登录页公开展示的 `Admin / admin123` 测试账号，不接受个人凭据。
-所有填写与点击坐标来自 Gemini Computer Use；DOM 仅用于操作边界、选取页面实际存在的
-演示员工编号与核验筛选后的实际结果，浏览器自身请求员工接口，程序不直接调用业务接口查询。
-共享演示数据会变化，员工编号从当次页面选取，不能指定任意员工或固定业务数据。
+小智调用 `browser_demo_orangehrm_employee`，只在已登录的页面上运行 Computer Use。
+未登录或登录态过期时，直接返回人工登录入口，不调用查询模型、不尝试共享账号。
+查询从页面实际记录选取员工编号并筛选；目前不支持任意查询条件、员工写入或审批。
+页面为空的职位/部门等字段显示“页面未填写”，不推断其值。
 
-每次创建新浏览器，先访问受保护的员工列表页检验已有 Cookie；仍需登录时才重新登录。
-登录资料使用原私有 GCS 桶、原加密密钥，存于独立的 `orangehrm-auth/<用户哈希>.enc`，
-与 `sap-auth/` 分离；按可信 TSE 身份隔离，保存时使用 GCS generation 条件防止覆盖。
-仅存该 Demo 域名的 Cookie/localStorage，不保存密码、截图或其他站点资料。
-这可在浏览器关闭、Cloud Run 缩减至零后恢复仍有效的站点会话；站点会话过期仍会重新登录。
-公开测试账号是共享账号，因此隔离浏览器资料不代表各用户拥有独立的 OrangeHRM 后端数据。
+登录页有三个操作：
 
-仅允许登录表单 POST 与只读员工查询 GET；禁止新增、编辑、删除、审批等业务请求。
-成功返回 `orangehrm-before.png` 与 `orangehrm-result.png`，沿用 Artifact/TSE 图片通道，
-图片 Base64 从工具 JSON 移除，不再等待第二次模型整理。
+- 连接/刷新：恢复该用户仍有效的人工登录态，或打开空白登录表单。
+- 关闭浏览器（保留登录态）：释放浏览器，下次连接恢复仍有效的会话。
+- 退出并清除登录态/切换账号：关闭浏览器并撤销该连接保存的状态，下次由本人重新登录。
 
-本机真实验证（先登录查询，再关闭浏览器并用保存的状态创建第二个浏览器验证）：
+也可在对话明确要求“退出 OrangeHRM 并清除登录态”，触发 `orangehrm_logout`。
+切换账号后旧浏览器必须关闭；执行中的查询不会被退出按钮中途覆盖。
+
+状态使用现有私有 GCS 桶和密钥，保存在 `orangehrm-auth/`，实际对象名是
+“TSE 用户 + 目标站点 + manual-v1”的哈希，且加密内容带模式与站点标记。
+旧版本共享账号自动登录产生的状态不会加载成新版人工登录状态。
+清除状态使用带 generation 条件的撤销记录，防止旧请求把已退出的 Cookie 再次覆盖回来。
+不新增资源或环境变量；原 SAP 的状态与页面保持独立。
+
+该目标仍是 OrangeHRM 官方公开演示站，账号由目标网站提供；此功能不会为用户创建
+OrangeHRM 账号，也不意味着公共演示站的数据按 TSE 用户划分。
+只有用户在目标系统中持有不同权限的业务账号时，才会看到各自权限范围的数据。
+
+### 显式共享账号演示模式
+
+只有明确发送以下指令才选择共享模式：
+
+> 使用 OrangeHRM 共享公开演示账号自动登录，演示员工查询并返回截图。
+
+此时小智调用独立的 `browser_demo_orangehrm_public_account`，结果标明共享账号；
+状态独立存于 `public-demo-v1` 作用域，绝不会给默认人工登录连接提供 Cookie。
+共享模式中的官网公开账号可供模型输入；个人凭据绝不会走这条路径。
+
+### 验证
 
 ```bash
-.venvAgents/bin/python -m scripts.check_orangehrm_demo
+.venvAgents/bin/python -m unittest scripts.test_orangehrm_human_login
+.venvAgents/bin/python -m scripts.check_orangehrm_human_login
 ```
 
-本机验证仅临时保存在内存；生产使用加密 GCS。私有 worker 新增
-`POST /demo/orangehrm`，与其他网页演示共享并发限制。无需新增服务、密钥或环境变量。
+第二条仅打开空白人工登录页面，不自动输入。真实网站测试可显式增加
+`--simulate-public-input`，测试脚本使用网站公开账号模拟人工输入 API，验证保存、恢复、
+只读模型查询与退出；不是生产自动登录开关。
+
+私有 worker 接口：
+
+- `/demo/orangehrm`：默认人工账号查询，未登录返回等待。
+- `/orangehrm/prepare|status|snapshot|action|close|logout`：TSE 代理登录与会话管理。
+- `/demo/orangehrm-public`：显式共享账号演示。
+
+TSE 页面为 `/api/system/smart_agents/orangehrm/browser`，要求 TSE 登录、同源 CSRF。
+客户端无法选择其他用户身份或服务地址；只转发必要的界面字段，密码与 Cookie 不回显。
+所有网页演示仍共用并发上限。成功查询通过 Artifact/TSE 返回两张图片，工具后不再等待模型整理。

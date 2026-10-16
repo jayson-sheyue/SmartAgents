@@ -83,7 +83,8 @@ from smart_agents.invoice_tools import (
 )
 from smart_agents.sap_response import sap_result_before_model_callback
 from smart_agents.browser_demo_tools import (BROWSER_DEMO_INSTRUCTION, browser_demo_compare_laptops,
-                                            browser_demo_fill_form, browser_demo_orangehrm_employee)
+                                            browser_demo_fill_form, browser_demo_orangehrm_employee,
+                                            browser_demo_orangehrm_public_account, orangehrm_prepare_browser, orangehrm_logout)
 
 
 def _require_cloud_mcp_url(*, primary: str, fallback: str, label: str) -> str:
@@ -303,7 +304,8 @@ if sap_enabled():
     _dispatcher_tools.extend([invoice_extract, sap_query_from_invoice, sap_query_recognized_invoice])
     dispatcher_instruction += sap_instruction() + INVOICE_INSTRUCTION
     if os.getenv('SAP_BROWSER_EXECUTION_MODE') == 'cloud':
-        _dispatcher_tools.extend([browser_demo_compare_laptops, browser_demo_fill_form, browser_demo_orangehrm_employee])
+        _dispatcher_tools.extend([browser_demo_compare_laptops, browser_demo_fill_form, browser_demo_orangehrm_employee,
+                                  browser_demo_orangehrm_public_account, orangehrm_prepare_browser, orangehrm_logout])
         dispatcher_instruction += BROWSER_DEMO_INSTRUCTION
 else:
     dispatcher_instruction += SAP_DISABLED_INSTRUCTION
